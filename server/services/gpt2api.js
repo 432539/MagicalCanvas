@@ -188,7 +188,7 @@ export async function generateGpt2apiVideo({ prompt, imageBase64, lastFrameBase6
  * 使用 SSE 流式接收再拼装：慢速推理模型（如 gpt-5 系列）非流式请求
  * 容易被中转网关 1~2 分钟超时掐断，流式则不受影响。
  */
-export async function gpt2apiChat({ messages, model, baseUrl, apiKey, temperature = 0.7, maxTokens }) {
+export async function gpt2apiChat({ messages, model, baseUrl, apiKey, temperature = 0.7, maxTokens, onDelta }) {
     if (!apiKey) throw new Error('未配置 gpt2api API Key（请在「设置」中填写）');
     const base = (baseUrl || 'https://www.gpt2api.com/v1').replace(/\/+$/, '');
 
@@ -227,7 +227,10 @@ export async function gpt2apiChat({ messages, model, baseUrl, apiKey, temperatur
                 const json = JSON.parse(payload);
                 if (json?.error) throw new Error(json.error.message || json.error);
                 const delta = json?.choices?.[0]?.delta?.content;
-                if (delta) full += delta;
+                if (delta) {
+                    full += delta;
+                    try { onDelta?.(delta, full.length); } catch { /* 进度回调失败不影响主流程 */ }
+                }
             } catch (e) {
                 if (e instanceof SyntaxError) continue; // 跳过非 JSON 行
                 throw e;

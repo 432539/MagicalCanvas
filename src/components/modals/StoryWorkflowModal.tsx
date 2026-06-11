@@ -80,6 +80,11 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
     const [autoGenerate, setAutoGenerate] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    // 分析进度浮层
+    const [stage, setStage] = useState('');
+    const [chars, setChars] = useState(0);
+    const [elapsed, setElapsed] = useState(0);
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     if (!isOpen) return null;
@@ -106,6 +111,10 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
         }
         setLoading(true);
         setError('');
+        setStage('正在提交剧本…');
+        setChars(0);
+        setElapsed(0);
+        timerRef.current = setInterval(() => setElapsed(v => v + 1), 1000);
         try {
             const res = await fetch('/api/story-workflow/analyze', {
                 method: 'POST',
@@ -118,16 +127,48 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
                     aspectRatio,
                 }),
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data?.error || '剧本分析失败');
-            onCreate(data as StoryWorkflowResult, { autoGenerate, aspectRatio });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error((data as any)?.error || '剧本分析失败');
+            }
+            if (!res.body) throw new Error('浏览器不支持流式响应');
+
+            // 解析服务端 SSE 进度流
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = '';
+            let result: StoryWorkflowResult | null = null;
+            let serverError = '';
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, { stream: true });
+                const parts = buf.split('\n\n');
+                buf = parts.pop() || '';
+                for (const part of parts) {
+                    const line = part.trim();
+                    if (!line.startsWith('data:')) continue;
+                    let evt: any;
+                    try { evt = JSON.parse(line.slice(5)); } catch { continue; }
+                    if (evt.type === 'status') setStage(evt.message);
+                    else if (evt.type === 'progress') { setChars(evt.chars); setStage('AI 正在创作分镜…'); }
+                    else if (evt.type === 'done') result = evt.data;
+                    else if (evt.type === 'error') serverError = evt.error;
+                }
+            }
+            if (serverError) throw new Error(serverError);
+            if (!result) throw new Error('连接中断，未收到分析结果，请重试');
+            onCreate(result, { autoGenerate, aspectRatio });
             onClose();
         } catch (err: any) {
             setError(err?.message || '剧本分析失败，请重试');
         } finally {
+            if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
             setLoading(false);
         }
     };
+
+    const fmtTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 
     const labelCls = 'flex items-center gap-1.5 text-xs font-medium text-neutral-400 mb-1.5';
 
@@ -347,6 +388,34 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
                         </button>
                     </div>
                 </div>
+
+                {/* 分析进度浮层 */}
+                {loading && (
+                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[#141416]/90 backdrop-blur-md">
+                        <div className="relative w-16 h-16 mb-5">
+                            <div className="absolute inset-0 rounded-full border-2 border-cyan-500/20" />
+                            <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-cyan-400 animate-spin" />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <Wand2 size={22} className="text-cyan-400" />
+                            </div>
+                        </div>
+                        <div className="text-sm font-medium text-white mb-1.5">{stage || 'AI 分析中…'}</div>
+                        <div className="text-[11px] text-neutral-500 mb-4">
+                            {chars > 0 ? `已生成 ${chars.toLocaleString()} 字符的分镜方案` : '正在阅读剧本、提取角色与场景…'}
+                        </div>
+                        <div className="w-64 h-1 rounded-full bg-white/[0.06] overflow-hidden mb-3">
+                            <div
+                                className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-violet-500 transition-all duration-700"
+                                style={{ width: chars > 0 ? `${Math.min(95, 10 + (chars / 8000) * 85)}%` : '6%' }}
+                            />
+                        </div>
+                        <div className="flex items-center gap-3 text-[11px] text-neutral-600">
+                            <span>已用时 {fmtTime(elapsed)}</span>
+                            <span className="text-neutral-700">·</span>
+                            <span>通常需要 1～3 分钟</span>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );
