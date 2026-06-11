@@ -346,6 +346,11 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
     const [libSelectMode, setLibSelectMode] = useState(false);           // 素材库多选模式
     const [libSelected, setLibSelected] = useState<Set<string>>(new Set()); // 已勾选素材（assetType_id）
     const [libDeleting, setLibDeleting] = useState(false);               // 批量删除中
+    const [libFilter, setLibFilter] = useState<'all' | 'video' | 'image'>('all'); // 素材类型筛选
+    const filteredLibrary = useMemo(
+        () => libFilter === 'all' ? library : library.filter(v => v.assetType === libFilter),
+        [library, libFilter]
+    );
 
     // ---- 时间轴数据 ----
     const [clips, setClips] = useState<Clip[]>([]);
@@ -1081,13 +1086,97 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         setDefaultStyle({ ...st });
     };
 
-    // ---- 拖拽（配音/字幕/贴纸块水平移动）----
-    const dragRef = useRef<{ kind: 'sub' | 'audio' | 'sticker'; id: string; startX: number; orig: number } | null>(null);
+    // ---- 时间轴多选（Ctrl+A 全选 / 空白处按住拖动框选 / Ctrl+点击加选）----
+    const [multiSel, setMultiSel] = useState<Set<string>>(new Set()); // key: `${kind}:${id}`
+    const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+    const marqueeRef = useRef<{ x0: number; y0: number } | null>(null);
+
+    /** 选中全部时间轴元素（视频/配音/字幕/贴纸） */
+    const selectAllTimeline = () => {
+        const all = new Set<string>();
+        clips.forEach(c => all.add(`clip:${c.id}`));
+        audios.forEach(a => all.add(`audio:${a.id}`));
+        subtitles.forEach(s => all.add(`sub:${s.id}`));
+        stickers.forEach(s => all.add(`sticker:${s.id}`));
+        setMultiSel(all);
+    };
+
+    /** 框选命中计算：行高与时间轴渲染保持一致（标尺 24px + 每轨 56px） */
+    const computeMarqueeSelection = (x: number, y: number, w: number, h: number) => {
+        const sel = new Set<string>();
+        const xs = x, xe = x + w, ys = y, ye = y + h;
+        const hitRow = (top: number, bottom: number) => ye > top && ys < bottom;
+        if (hitRow(24, 80)) {
+            let cx = 0;
+            for (const c of clips) {
+                const cw = Math.max(clipDur(c) * pxPerSec, 30);
+                if (xe > cx && xs < cx + cw) sel.add(`clip:${c.id}`);
+                cx += cw;
+            }
+        }
+        if (hitRow(80, 136)) audios.forEach(a => {
+            const l = a.start * pxPerSec, iw = Math.max(audioDur(a) * pxPerSec, 24);
+            if (xe > l && xs < l + iw) sel.add(`audio:${a.id}`);
+        });
+        if (hitRow(136, 192)) subtitles.forEach(s => {
+            const l = s.start * pxPerSec, iw = Math.max((s.end - s.start) * pxPerSec, 24);
+            if (xe > l && xs < l + iw) sel.add(`sub:${s.id}`);
+        });
+        if (hitRow(192, 248)) stickers.forEach(s => {
+            const l = s.start * pxPerSec, iw = Math.max((s.end - s.start) * pxPerSec, 24);
+            if (xe > l && xs < l + iw) sel.add(`sticker:${s.id}`);
+        });
+        return sel;
+    };
+
+    /** 批量删除多选元素（撤销栈自动记录） */
+    const deleteMultiSelected = () => {
+        if (multiSel.size === 0) return;
+        const has = (k: string, id: string) => multiSel.has(`${k}:${id}`);
+        setClips(prev => {
+            const keep = prev.filter(c => !has('clip', c.id));
+            if (keep.length !== prev.length) setTransitions(tp => tp.slice(0, Math.max(0, keep.length - 1)));
+            return keep;
+        });
+        setAudios(prev => prev.filter(a => !has('audio', a.id)));
+        setSubtitles(prev => prev.filter(s => !has('sub', s.id)));
+        setStickers(prev => prev.filter(s => !has('sticker', s.id)));
+        if (selected && multiSel.has(`${selected.kind}:${selected.id}`)) setSelected(null);
+        setMultiSel(new Set());
+        currentClipIdxRef.current = -1;
+    };
+
+    // ---- 拖拽（配音/字幕/贴纸块水平移动；多选时整组移动）----
+    const dragRef = useRef<{
+        kind: 'sub' | 'audio' | 'sticker'; id: string; startX: number; orig: number;
+        group?: { kind: 'sub' | 'audio' | 'sticker'; id: string; orig: number }[];
+    } | null>(null);
 
     const onItemPointerDown = (e: React.PointerEvent, kind: 'sub' | 'audio' | 'sticker', id: string, origStart: number) => {
         e.stopPropagation();
+        const key = `${kind}:${id}`;
+        // Ctrl+点击：切换该项的多选状态，不进入拖动
+        if (e.ctrlKey || e.metaKey) {
+            setMultiSel(prev => {
+                const next = new Set(prev);
+                if (next.has(key)) next.delete(key); else next.add(key);
+                return next;
+            });
+            return;
+        }
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
-        dragRef.current = { kind, id, startX: e.clientX, orig: origStart };
+        // 拖动多选成员 → 整组移动（仅时间可移的三类轨道；视频片段是顺序排列不参与）
+        let group: { kind: 'sub' | 'audio' | 'sticker'; id: string; orig: number }[] | undefined;
+        if (multiSel.has(key) && multiSel.size > 1) {
+            group = [
+                ...audios.filter(a => multiSel.has(`audio:${a.id}`)).map(a => ({ kind: 'audio' as const, id: a.id, orig: a.start })),
+                ...subtitles.filter(s => multiSel.has(`sub:${s.id}`)).map(s => ({ kind: 'sub' as const, id: s.id, orig: s.start })),
+                ...stickers.filter(s => multiSel.has(`sticker:${s.id}`)).map(s => ({ kind: 'sticker' as const, id: s.id, orig: s.start })),
+            ];
+        } else if (!multiSel.has(key) && multiSel.size > 0) {
+            setMultiSel(new Set()); // 点击未选中的项 → 退出多选
+        }
+        dragRef.current = { kind, id, startX: e.clientX, orig: origStart, group };
         setSelected({ kind, id });
     };
 
@@ -1095,6 +1184,16 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         const d = dragRef.current;
         if (!d) return;
         const delta = (e.clientX - d.startX) / pxPerSec;
+        // 整组移动：以最早的元素不越过 0 为限
+        if (d.group && d.group.length > 0) {
+            const minOrig = Math.min(...d.group.map(g => g.orig));
+            const del = Math.max(delta, -minOrig);
+            const find = (kind: string, id: string) => d.group!.find(g => g.kind === kind && g.id === id);
+            setAudios(prev => prev.map(a => { const g = find('audio', a.id); return g ? { ...a, start: g.orig + del } : a; }));
+            setSubtitles(prev => prev.map(s => { const g = find('sub', s.id); return g ? { ...s, start: g.orig + del, end: g.orig + del + (s.end - s.start) } : s; }));
+            setStickers(prev => prev.map(s => { const g = find('sticker', s.id); return g ? { ...s, start: g.orig + del, end: g.orig + del + (s.end - s.start) } : s; }));
+            return;
+        }
         const newStart = Math.max(0, d.orig + delta);
         if (d.kind === 'audio') {
             setAudios(prev => prev.map(a => a.id === d.id ? { ...a, start: newStart } : a));
@@ -1162,23 +1261,44 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
 
     const onAudioTrimUp = () => { audioTrimRef.current = null; };
 
-    // ---- 时间轴空白区域：点击/拖动播放头（整个时间轴可刷），片段等元素会 stopPropagation ----
+    // ---- 时间轴空白区域：标尺区点击/拖动刷播放头；轨道空白区点击定位、按住拖动 = 框选 ----
     const scrubbingRef = useRef(false);
 
     const onTimelinePointerDown = (e: React.PointerEvent) => {
-        scrubbingRef.current = true;
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        seekTo((e.clientX - rect.left) / pxPerSec);
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        seekTo(x / pxPerSec);
+        if (y <= 24) {
+            scrubbingRef.current = true; // 标尺区：继续拖动刷播放头
+        } else {
+            marqueeRef.current = { x0: x, y0: y }; // 轨道空白区：拖动进入框选
+        }
     };
 
     const onTimelinePointerMove = (e: React.PointerEvent) => {
-        if (!scrubbingRef.current) return;
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        seekTo((e.clientX - rect.left) / pxPerSec);
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        if (scrubbingRef.current) {
+            seekTo(x / pxPerSec);
+            return;
+        }
+        const m = marqueeRef.current;
+        if (!m) return;
+        if (!marquee && Math.abs(x - m.x0) < 5 && Math.abs(y - m.y0) < 5) return; // 拖动阈值
+        const r = { x: Math.min(m.x0, x), y: Math.min(m.y0, y), w: Math.abs(x - m.x0), h: Math.abs(y - m.y0) };
+        setMarquee(r);
+        setMultiSel(computeMarqueeSelection(r.x, r.y, r.w, r.h));
     };
 
-    const onTimelinePointerUp = () => { scrubbingRef.current = false; };
+    const onTimelinePointerUp = () => {
+        scrubbingRef.current = false;
+        if (marqueeRef.current && !marquee) setMultiSel(new Set()); // 单击空白：清除多选
+        marqueeRef.current = null;
+        setMarquee(null);
+    };
 
     // ---- 时间轴滚轮缩放（以鼠标位置为中心；Shift+滚轮 = 横向滚动）----
     const pxPerSecRef = useRef(pxPerSec);
@@ -1221,6 +1341,17 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
 
     const onClipPointerDown = (e: React.PointerEvent, c: Clip, mode: 'move' | 'trimL' | 'trimR') => {
         e.stopPropagation();
+        // Ctrl+点击：切换片段多选状态，不进入拖动
+        if (mode === 'move' && (e.ctrlKey || e.metaKey)) {
+            setMultiSel(prev => {
+                const next = new Set(prev);
+                const key = `clip:${c.id}`;
+                if (next.has(key)) next.delete(key); else next.add(key);
+                return next;
+            });
+            return;
+        }
+        if (multiSel.size > 0 && !multiSel.has(`clip:${c.id}`)) setMultiSel(new Set());
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
         clipDragRef.current = { mode, id: c.id, startX: e.clientX, origIn: c.inPoint, origOut: c.outPoint, moved: false };
         setSelected({ kind: 'clip', id: c.id });
@@ -1382,7 +1513,17 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                 if (clipboardRef.current) { e.preventDefault(); pasteClipboard(); }
                 return;
             }
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+                e.preventDefault();
+                selectAllTimeline();
+                return;
+            }
+            if (e.key === 'Escape' && multiSel.size > 0) {
+                setMultiSel(new Set());
+                return;
+            }
             if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (multiSel.size > 0) { deleteMultiSelected(); return; }
                 if (!selected) return;
                 if (selected.kind === 'clip') removeClip(selected.id);
                 else if (selected.kind === 'sub') { setSubtitles(p => p.filter(s => s.id !== selected.id)); setSelected(null); }
@@ -1728,14 +1869,32 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                             </button>
                         </div>
                     </div>
+                    {/* 类型筛选：全部 / 视频 / 图片 */}
+                    <div className="px-2 py-1.5 border-b border-neutral-800 flex items-center gap-1">
+                        {([
+                            { key: 'all' as const, label: '全部', count: library.length },
+                            { key: 'video' as const, label: '视频', count: library.filter(v => v.assetType === 'video').length },
+                            { key: 'image' as const, label: '图片', count: library.filter(v => v.assetType === 'image').length },
+                        ]).map(f => (
+                            <button
+                                key={f.key}
+                                onClick={() => setLibFilter(f.key)}
+                                className={`flex-1 text-[10px] px-1.5 py-1 rounded border transition-colors ${libFilter === f.key
+                                    ? 'bg-cyan-600/30 border-cyan-600 text-cyan-300'
+                                    : 'bg-neutral-800 hover:bg-neutral-700 border-neutral-700 text-neutral-400'}`}
+                            >
+                                {f.label} {f.count}
+                            </button>
+                        ))}
+                    </div>
                     {/* 多选模式工具栏 */}
                     {libSelectMode && (
                         <div className="px-2 py-1.5 border-b border-neutral-800 flex items-center gap-1 text-[10px]">
                             <button
-                                onClick={() => setLibSelected(prev => prev.size === library.length ? new Set() : new Set(library.map(v => `${v.assetType}_${v.id}`)))}
+                                onClick={() => setLibSelected(prev => prev.size === filteredLibrary.length ? new Set() : new Set(filteredLibrary.map(v => `${v.assetType}_${v.id}`)))}
                                 className="px-1.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-300"
                             >
-                                {libSelected.size === library.length && library.length > 0 ? '取消全选' : '全选'}
+                                {libSelected.size === filteredLibrary.length && filteredLibrary.length > 0 ? '取消全选' : '全选'}
                             </button>
                             <button
                                 onClick={handleBatchDelete}
@@ -1762,10 +1921,12 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                     )}
                     <div className="flex-1 min-h-0 overflow-y-auto p-2 flex flex-wrap gap-2 content-start">
                         {libLoading && <div className="w-full flex justify-center py-6"><Loader2 className="animate-spin text-neutral-500" size={18} /></div>}
-                        {!libLoading && library.length === 0 && (
-                            <div className="w-full text-center text-xs text-neutral-600 py-8">还没有素材<br />去画布生成、点上方「导入」<br />或直接把文件拖到这里</div>
+                        {!libLoading && filteredLibrary.length === 0 && (
+                            <div className="w-full text-center text-xs text-neutral-600 py-8">
+                                {library.length === 0 ? <>还没有素材<br />去画布生成、点上方「导入」<br />或直接把文件拖到这里</> : '该分类下没有素材'}
+                            </div>
                         )}
-                        {library.map(v => {
+                        {filteredLibrary.map(v => {
                             const checked = libSelected.has(`${v.assetType}_${v.id}`);
                             return (
                             <div
@@ -2506,7 +2667,26 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
             </div>
 
             {/* ===== 底部时间轴 ===== */}
-            <div className="h-[276px] border-t border-neutral-800 flex flex-shrink-0 bg-[#0e0e0e]">
+            <div className="relative h-[276px] border-t border-neutral-800 flex flex-shrink-0 bg-[#0e0e0e]">
+                {/* 多选浮动工具栏 */}
+                {multiSel.size > 0 && (
+                    <div className="absolute -top-10 right-4 z-[60] flex items-center gap-2 px-3 py-1.5 bg-neutral-900/95 border border-neutral-700 rounded-full shadow-2xl text-[11px] backdrop-blur-sm">
+                        <span className="text-cyan-300 font-medium">已选 {multiSel.size} 项</span>
+                        <span className="text-neutral-600">拖动整体移动（视频片段除外）</span>
+                        <button
+                            onClick={deleteMultiSelected}
+                            className="flex items-center gap-1 px-2 py-1 rounded-full bg-red-600/30 hover:bg-red-600/60 border border-red-700 text-red-300"
+                        >
+                            <Trash2 size={11} /> 删除
+                        </button>
+                        <button
+                            onClick={() => setMultiSel(new Set())}
+                            className="px-2 py-1 rounded-full bg-neutral-800 hover:bg-neutral-700 text-neutral-400"
+                        >
+                            取消 (Esc)
+                        </button>
+                    </div>
+                )}
                 {/* 轨道头（固定列，与各轨行高对齐） */}
                 <div className="w-16 flex-shrink-0 border-r border-neutral-800 bg-[#121212] flex flex-col select-none">
                     <div className="h-6 border-b border-neutral-800 flex-shrink-0" />
@@ -2563,7 +2743,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                             <div className="flex h-12 items-center">
                                 {clips.map((c, i) => {
                                     const w = clipDur(c) * pxPerSec;
-                                    const isSel = selected?.kind === 'clip' && selected.id === c.id;
+                                    const isSel = (selected?.kind === 'clip' && selected.id === c.id) || multiSel.has(`clip:${c.id}`);
                                     const dragDx = clipDragOffset?.id === c.id ? clipDragOffset.dx : 0;
                                     return (
                                         <React.Fragment key={c.id}>
@@ -2682,7 +2862,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         {/* 配音轨 */}
                         <div className="h-14 relative border-b border-neutral-900">
                             {audios.map(a => {
-                                const isSel = selected?.kind === 'audio' && selected.id === a.id;
+                                const isSel = (selected?.kind === 'audio' && selected.id === a.id) || multiSel.has(`audio:${a.id}`);
                                 return (
                                     <div
                                         key={a.id}
@@ -2726,7 +2906,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         {/* 字幕轨 */}
                         <div className="h-14 relative border-b border-neutral-900">
                             {subtitles.map(s => {
-                                const isSel = selected?.kind === 'sub' && selected.id === s.id;
+                                const isSel = (selected?.kind === 'sub' && selected.id === s.id) || multiSel.has(`sub:${s.id}`);
                                 return (
                                     <div
                                         key={s.id}
@@ -2763,7 +2943,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         {/* 贴纸轨（恒显） */}
                         <div className="h-14 relative border-b border-neutral-900">
                             {stickers.map(s => {
-                                const isSel = selected?.kind === 'sticker' && selected.id === s.id;
+                                const isSel = (selected?.kind === 'sticker' && selected.id === s.id) || multiSel.has(`sticker:${s.id}`);
                                 return (
                                     <div
                                         key={s.id}
@@ -2789,6 +2969,14 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         <div className="absolute top-0 bottom-0 w-px bg-red-500 z-30 pointer-events-none" style={{ left: playhead * pxPerSec }}>
                             <div className="w-2.5 h-2.5 -ml-[5px] bg-red-500 rotate-45" />
                         </div>
+
+                        {/* 框选矩形 */}
+                        {marquee && (
+                            <div
+                                className="absolute border border-cyan-400 bg-cyan-400/10 z-40 pointer-events-none rounded-sm"
+                                style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
+                            />
+                        )}
                     </div>
                 </div>
             </div>
