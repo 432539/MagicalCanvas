@@ -11,7 +11,7 @@ import { Toolbar } from './components/Toolbar';
 import { TopBar } from './components/TopBar';
 import { CanvasNode } from './components/canvas/CanvasNode';
 import { ConnectionsLayer, getNodeWidth, getNodeHeight } from './components/canvas/ConnectionsLayer';
-import { LayoutGrid } from 'lucide-react';
+import { LayoutGrid, RotateCcw } from 'lucide-react';
 import { ContextMenu } from './components/ContextMenu';
 import { ContextMenuState, NodeData, NodeStatus, NodeType } from './types';
 import { generateImage, generateVideo } from './services/generationService';
@@ -482,10 +482,11 @@ export default function App() {
 
     const ids = st.phase === 'assets' ? st.assetIds : st.shotIds;
     const tracked = nodes.filter(n => ids.includes(n.id));
-    if (tracked.length === 0) return;
+    // 节点尚未挂载到画布（创建瞬间的竞态），等下一次 nodes 变化再调度
+    if (ids.length > 0 && tracked.length === 0) return;
 
-    // 当前阶段全部完成 → 进入下一阶段
-    if (tracked.every(isDone)) {
+    // 当前阶段为空或全部完成 → 进入下一阶段
+    if (ids.length === 0 || tracked.every(isDone)) {
       if (st.phase === 'assets') {
         st.phase = 'shots';
         console.log('[StoryWorkflow] 资产图生成完毕，开始生成分镜图:', st.shotIds.length);
@@ -509,6 +510,23 @@ export default function App() {
       });
     }
   }, [nodes]);
+
+  // 批量重试：把所有失败的图片/视频节点重置为待生成，交给并发队列（图片先行，视频随后）
+  const failedNodeCount = nodes.filter(n => n.status === NodeStatus.ERROR && n.type !== NodeType.TEXT).length;
+  const handleRetryFailed = React.useCallback(() => {
+    const failed = nodes.filter(n => n.status === NodeStatus.ERROR && n.type !== NodeType.TEXT);
+    if (failed.length === 0) return;
+    const failedIds = new Set(failed.map(n => n.id));
+    const imageIds = failed.filter(n => n.type !== NodeType.VIDEO).map(n => n.id);
+    const videoIds = failed.filter(n => n.type === NodeType.VIDEO).map(n => n.id);
+    setNodes(prev => prev.map(n => failedIds.has(n.id) ? { ...n, status: NodeStatus.IDLE, errorMessage: undefined } : n));
+    storyAutoGenRef.current = {
+      assetIds: imageIds,
+      shotIds: videoIds,
+      phase: 'assets',
+      launched: new Set(),
+    };
+  }, [nodes, setNodes]);
 
   const handleCreateStoryWorkflow = React.useCallback((result: StoryWorkflowResult, opts: { autoGenerate: boolean; aspectRatio?: string }) => {
     const GAP_X = 160;
@@ -1557,6 +1575,19 @@ export default function App() {
             <LayoutGrid size={13} />
             一键排版
           </button>
+          {failedNodeCount > 0 && (
+            <>
+              <div className={`w-px h-4 ${canvasTheme === 'dark' ? 'bg-neutral-700' : 'bg-neutral-300'}`} />
+              <button
+                onClick={handleRetryFailed}
+                className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-full text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
+                title="重新生成所有失败的图片/视频节点（图片优先，最多 3 个并发）"
+              >
+                <RotateCcw size={13} />
+                重试失败 ({failedNodeCount})
+              </button>
+            </>
+          )}
         </div>
       )}
 
