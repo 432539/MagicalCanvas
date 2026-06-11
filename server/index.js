@@ -41,6 +41,11 @@ const LIBRARY_ASSETS_DIR = path.join(LIBRARY_DIR, 'assets');
 app.use(cors());
 app.use(express.json({ limit: '100mb' }));
 
+// 健康检查：供 Electron 主进程确认 3501 端口上运行的是本应用（而非其他程序）
+app.get('/api/health', (req, res) => {
+    res.json({ app: 'magical-canvas', mode: process.env.NODE_ENV || 'development' });
+});
+
 // Serve static assets from library with CORS headers for cross-origin image access
 app.use('/library', (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');

@@ -50,13 +50,24 @@ function startServer() {
     serverProcess.on('exit', (code) => console.log('[server] exited with code', code));
 }
 
+/**
+ * 等待后端就绪。通过 /api/health 确认端口上运行的确实是本应用：
+ * 若 3501 被其他程序（如开发模式的后端）占用，则返回 'foreign'。
+ */
 function waitForServer(timeoutMs = 30000) {
     const start = Date.now();
     return new Promise((resolve, reject) => {
         const tryOnce = () => {
-            const req = http.get(BASE_URL, (res) => {
-                res.destroy();
-                resolve();
+            const req = http.get(`${BASE_URL}/api/health`, (res) => {
+                let body = '';
+                res.on('data', (d) => { body += d; });
+                res.on('end', () => {
+                    try {
+                        const data = JSON.parse(body);
+                        if (data.app === 'magical-canvas' && data.mode === 'production') return resolve('ok');
+                    } catch (_) { /* 非本应用的响应 */ }
+                    resolve('foreign');
+                });
             });
             req.on('error', () => {
                 if (Date.now() - start > timeoutMs) {
@@ -131,7 +142,16 @@ if (!gotLock) {
     app.whenReady().then(async () => {
         startServer();
         try {
-            await waitForServer();
+            const status = await waitForServer();
+            if (status === 'foreign') {
+                const { dialog } = require('electron');
+                dialog.showErrorBox(
+                    '端口被占用',
+                    '端口 3501 已被其他程序占用（可能是正在运行的开发服务器）。\n\n请先关闭占用该端口的程序，再重新打开 Magical Canvas。'
+                );
+                app.quit();
+                return;
+            }
         } catch (err) {
             console.error(err);
         }
