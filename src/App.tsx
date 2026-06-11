@@ -10,7 +10,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Toolbar } from './components/Toolbar';
 import { TopBar } from './components/TopBar';
 import { CanvasNode } from './components/canvas/CanvasNode';
-import { ConnectionsLayer } from './components/canvas/ConnectionsLayer';
+import { ConnectionsLayer, getNodeWidth, getNodeHeight } from './components/canvas/ConnectionsLayer';
+import { LayoutGrid } from 'lucide-react';
 import { ContextMenu } from './components/ContextMenu';
 import { ContextMenuState, NodeData, NodeStatus, NodeType } from './types';
 import { generateImage, generateVideo } from './services/generationService';
@@ -747,6 +748,92 @@ export default function App() {
     return () => canvas.removeEventListener('wheel', handleNativeWheel);
   }, []);
 
+  /**
+   * 一键排版：按依赖深度分层（左→右），列内按父节点位置排序（减少交叉），
+   * 排版后自动缩放视野以完整展示所有节点。
+   */
+  const handleAutoLayout = React.useCallback(() => {
+    if (nodes.length === 0) return;
+    const byId = new Map(nodes.map(n => [n.id, n]));
+    const depthCache = new Map<string, number>();
+    const depthOf = (n: NodeData, stack: Set<string>): number => {
+      if (depthCache.has(n.id)) return depthCache.get(n.id)!;
+      if (stack.has(n.id)) return 0; // 防御环
+      stack.add(n.id);
+      const parents = (n.parentIds || []).map(id => byId.get(id)).filter(Boolean) as NodeData[];
+      const d = parents.length === 0 ? 0 : Math.max(...parents.map(p => depthOf(p, stack))) + 1;
+      depthCache.set(n.id, d);
+      return d;
+    };
+    nodes.forEach(n => depthOf(n, new Set()));
+
+    // 按深度分列
+    const cols = new Map<number, NodeData[]>();
+    nodes.forEach(n => {
+      const d = depthCache.get(n.id)!;
+      if (!cols.has(d)) cols.set(d, []);
+      cols.get(d)!.push(n);
+    });
+    const sortedDepths = [...cols.keys()].sort((a, b) => a - b);
+
+    // 列内排序：第 0 列按当前 y，其余列按父节点平均序号（重心法）
+    const orderIdx = new Map<string, number>();
+    sortedDepths.forEach(d => {
+      const arr = cols.get(d)!;
+      if (d === sortedDepths[0]) {
+        arr.sort((a, b) => a.y - b.y);
+      } else {
+        const bary = (n: NodeData) => {
+          const ps = (n.parentIds || []).filter(id => orderIdx.has(id));
+          if (ps.length === 0) return Number.MAX_SAFE_INTEGER;
+          return ps.reduce((s, id) => s + orderIdx.get(id)!, 0) / ps.length;
+        };
+        arr.sort((a, b) => bary(a) - bary(b));
+      }
+      arr.forEach((n, i) => orderIdx.set(n.id, i));
+    });
+
+    // 逐列定位：列宽取该列最宽节点，列内垂直居中堆叠
+    const GAP_X = 160;
+    const GAP_Y = 70;
+    const pos = new Map<string, { x: number; y: number }>();
+    let colX = 0;
+    sortedDepths.forEach(d => {
+      const arr = cols.get(d)!;
+      const colWidth = Math.max(...arr.map(n => getNodeWidth(n)));
+      const heights = arr.map(n => getNodeHeight(n));
+      const totalH = heights.reduce((s, h) => s + h, 0) + GAP_Y * (arr.length - 1);
+      let y = -totalH / 2;
+      arr.forEach((n, i) => {
+        pos.set(n.id, { x: colX, y });
+        y += heights[i] + GAP_Y;
+      });
+      colX += colWidth + GAP_X;
+    });
+
+    setNodes(prev => prev.map(n => pos.has(n.id) ? { ...n, x: pos.get(n.id)!.x, y: pos.get(n.id)!.y } : n));
+
+    // 自动缩放视野以容纳全部节点
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    nodes.forEach(n => {
+      const p = pos.get(n.id);
+      if (!p) return;
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x + getNodeWidth(n));
+      maxY = Math.max(maxY, p.y + getNodeHeight(n));
+    });
+    const bw = maxX - minX, bh = maxY - minY;
+    const margin = 120;
+    const zoom = Math.min(1, Math.max(0.1,
+      Math.min((window.innerWidth - margin * 2) / bw, (window.innerHeight - margin * 2) / bh)));
+    setViewport({
+      x: (window.innerWidth - bw * zoom) / 2 - minX * zoom,
+      y: (window.innerHeight - bh * zoom) / 2 - minY * zoom,
+      zoom,
+    });
+  }, [nodes, setNodes, setViewport]);
+
   // 防止把文件拖进窗口时浏览器/Electron 直接打开该文件（覆盖整个应用页面）
   useEffect(() => {
     const prevent = (e: DragEvent) => e.preventDefault();
@@ -1013,15 +1100,20 @@ export default function App() {
             pointerEvents: 'none'
           }}
         >
-          {/* Background Grid */}
+          {/* Background Grid：细网格线 + 每 5 格一条加粗主线 */}
           <div
             className="absolute -top-[10000px] -left-[10000px] w-[20000px] h-[20000px]"
             style={{
               backgroundImage: canvasTheme === 'dark'
-                ? 'radial-gradient(#666 1px, transparent 1px)'
-                : 'radial-gradient(#ccc 1px, transparent 1px)',
-              backgroundSize: '20px 20px',
-              opacity: canvasTheme === 'dark' ? 0.5 : 0.8
+                ? `linear-gradient(rgba(255,255,255,0.055) 1px, transparent 1px),
+                   linear-gradient(90deg, rgba(255,255,255,0.055) 1px, transparent 1px),
+                   linear-gradient(rgba(255,255,255,0.12) 1px, transparent 1px),
+                   linear-gradient(90deg, rgba(255,255,255,0.12) 1px, transparent 1px)`
+                : `linear-gradient(rgba(0,0,0,0.06) 1px, transparent 1px),
+                   linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px),
+                   linear-gradient(rgba(0,0,0,0.13) 1px, transparent 1px),
+                   linear-gradient(90deg, rgba(0,0,0,0.13) 1px, transparent 1px)`,
+              backgroundSize: '28px 28px, 28px 28px, 140px 140px, 140px 140px'
             }}
           />
 
@@ -1237,6 +1329,16 @@ export default function App() {
             className="w-32"
           />
           <span className={`text-xs w-10 ${canvasTheme === 'dark' ? 'text-neutral-300' : 'text-neutral-600'}`}>{Math.round(viewport.zoom * 100)}%</span>
+          <div className={`w-px h-4 ${canvasTheme === 'dark' ? 'bg-neutral-700' : 'bg-neutral-300'}`} />
+          <button
+            onClick={handleAutoLayout}
+            disabled={nodes.length === 0}
+            className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full transition-colors disabled:opacity-40 ${canvasTheme === 'dark' ? 'text-neutral-300 hover:bg-neutral-800 hover:text-white' : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'}`}
+            title="按依赖关系自动整理节点布局"
+          >
+            <LayoutGrid size={13} />
+            一键排版
+          </button>
         </div>
       )}
 

@@ -18,7 +18,7 @@ import { calculateConnectionPath } from '../../utils/connectionHelpers';
  * @param node - The node to calculate width for
  * @param parentNode - Optional parent node (used for Editor nodes to determine width when they have input content)
  */
-const getNodeWidth = (node: NodeData, parentNode?: NodeData): number => {
+export const getNodeWidth = (node: NodeData, parentNode?: NodeData): number => {
     // Image Editor with input from parent: width depends on aspect ratio
     if (node.type === NodeType.IMAGE_EDITOR) {
         const hasInput = parentNode && parentNode.status === NodeStatus.SUCCESS && parentNode.resultUrl;
@@ -68,7 +68,7 @@ const getNodeWidth = (node: NodeData, parentNode?: NodeData): number => {
  * @param node - The node to calculate height for
  * @param parentNode - Optional parent node (used for Editor nodes to determine if they have input content)
  */
-const getNodeHeight = (node: NodeData, parentNode?: NodeData): number => {
+export const getNodeHeight = (node: NodeData, parentNode?: NodeData): number => {
     const baseWidth = getNodeWidth(node, parentNode);
     const hasContent = node.status === NodeStatus.SUCCESS && node.resultUrl;
 
@@ -182,6 +182,7 @@ export const ConnectionsLayer: React.FC<ConnectionsLayerProps> = ({
 }) => {
     // Render permanent connections between nodes
     const connections: React.ReactNode[] = [];
+    const gradients: React.ReactNode[] = [];
 
     nodes.forEach(node => {
         if (!node.parentIds || node.parentIds.length === 0) return;
@@ -197,6 +198,21 @@ export const ConnectionsLayer: React.FC<ConnectionsLayerProps> = ({
 
             const path = calculateConnectionPath(startX, startY, endX, endY, 'right');
             const isSelected = selectedConnection?.parentId === parentId && selectedConnection?.childId === node.id;
+            const gradId = `conn-grad-${parent.id}-${node.id}`;
+
+            // 沿连线方向的渐变（青 → 紫 → 粉）
+            gradients.push(
+                <linearGradient
+                    key={gradId}
+                    id={gradId}
+                    gradientUnits="userSpaceOnUse"
+                    x1={startX} y1={startY} x2={endX} y2={endY}
+                >
+                    <stop offset="0%" stopColor="#06b6d4" />
+                    <stop offset="55%" stopColor="#8b5cf6" />
+                    <stop offset="100%" stopColor="#ec4899" />
+                </linearGradient>
+            );
 
             connections.push(
                 <g
@@ -205,14 +221,26 @@ export const ConnectionsLayer: React.FC<ConnectionsLayerProps> = ({
                     className="cursor-pointer group pointer-events-auto"
                 >
                     <path d={path} stroke="transparent" strokeWidth="20" fill="none" />
+                    {/* 彩色渐变主线 */}
                     <path
                         d={path}
-                        stroke={isSelected
-                            ? (canvasTheme === 'dark' ? '#fff' : '#2563eb')
-                            : (canvasTheme === 'dark' ? '#444' : '#d1d5db')}
-                        strokeWidth="2"
+                        stroke={`url(#${gradId})`}
+                        strokeWidth={isSelected ? 3.5 : 2.5}
+                        strokeLinecap="round"
                         fill="none"
-                        className={`transition-colors ${!isSelected ? (canvasTheme === 'dark' ? 'group-hover:stroke-neutral-300' : 'group-hover:stroke-neutral-500') : ''}`}
+                        opacity={isSelected ? 1 : 0.9}
+                        className="transition-all group-hover:opacity-100"
+                    />
+                    {/* 流动光点（虚线滚动动画） */}
+                    <path
+                        d={path}
+                        stroke={canvasTheme === 'dark' ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.95)'}
+                        strokeWidth={isSelected ? 2 : 1.6}
+                        strokeLinecap="round"
+                        strokeDasharray="3 17"
+                        fill="none"
+                        style={{ animation: 'connFlow 1s linear infinite' }}
+                        className="pointer-events-none"
                     />
                 </g>
             );
@@ -252,6 +280,8 @@ export const ConnectionsLayer: React.FC<ConnectionsLayerProps> = ({
 
     return (
         <>
+            <defs>{gradients}</defs>
+            <style>{`@keyframes connFlow { to { stroke-dashoffset: -20; } }`}</style>
             {connections}
             {tempLine}
         </>
