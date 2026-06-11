@@ -49,6 +49,7 @@ import { AssetLibraryPanel } from './components/AssetLibraryPanel';
 import { useStoryboardGenerator } from './hooks/useStoryboardGenerator';
 import { StoryboardGeneratorModal } from './components/modals/StoryboardGeneratorModal';
 import { StoryboardVideoModal } from './components/modals/StoryboardVideoModal';
+import { StoryWorkflowModal, StoryWorkflowResult } from './components/modals/StoryWorkflowModal';
 import { VideoStudioPage } from './components/videoStudio/VideoStudioPage';
 import { AppDialogHost } from './components/ui/AppDialog';
 import { DesktopTitleBar } from './components/ui/DesktopTitleBar';
@@ -462,6 +463,174 @@ export default function App() {
     onCreateNodes: handleCreateStoryboardNodes,
     viewport
   });
+
+  // ============================================================================
+  // 一键创建工作流（小说/剧本 → 资产 + 分镜 + 视频节点）
+  // ============================================================================
+  const [isStoryWorkflowOpen, setIsStoryWorkflowOpen] = useState(false);
+
+  // 自动生图队列：先生成资产图，全部完成后再生成分镜图（分镜依赖资产图作图生图参考）
+  const storyAutoGenRef = useRef<{ assetIds: string[]; shotIds: string[]; phase: 'assets' | 'shots' | 'done' } | null>(null);
+
+  useEffect(() => {
+    const st = storyAutoGenRef.current;
+    if (!st || st.phase !== 'assets') return;
+    const assetNodes = nodes.filter(n => st.assetIds.includes(n.id));
+    if (assetNodes.length === 0) return;
+    const allDone = assetNodes.every(n => n.status === NodeStatus.SUCCESS || n.status === NodeStatus.ERROR);
+    const anyStarted = assetNodes.some(n => n.status !== NodeStatus.IDLE);
+    if (anyStarted && allDone) {
+      st.phase = 'shots';
+      console.log('[StoryWorkflow] 资产图生成完毕，开始生成分镜图:', st.shotIds.length);
+      st.shotIds.forEach((id, i) => {
+        setTimeout(() => handleGenerateRef.current(id), i * 1200);
+      });
+      // 分镜触发完毕即标记结束（分镜各自异步生成）
+      setTimeout(() => { if (storyAutoGenRef.current === st) st.phase = 'done'; }, st.shotIds.length * 1200 + 1000);
+    }
+  }, [nodes]);
+
+  const handleCreateStoryWorkflow = React.useCallback((result: StoryWorkflowResult, opts: { autoGenerate: boolean }) => {
+    const GAP_X = 160;
+    const GAP_Y = 70;
+
+    // 放到现有节点右侧，避免覆盖
+    let baseX = 0;
+    if (nodes.length > 0) {
+      baseX = Math.max(...nodes.map(n => n.x + getNodeWidth(n))) + 320;
+    }
+
+    const defaults = {
+      status: NodeStatus.IDLE,
+      model: 'Banana Pro',
+      imageModel: 'nano-banana-pro',
+      videoModel: 'grok-imagine-video',
+      resolution: '1K',
+    };
+
+    // —— 第 0 列：剧本与风格（Text 节点，仅作参考说明，不连线避免污染提示词）——
+    const textNode: NodeData = {
+      ...defaults,
+      id: crypto.randomUUID(),
+      type: NodeType.TEXT,
+      title: `剧本 · ${result.title || '未命名'}`,
+      x: 0, y: 0,
+      prompt: `《${result.title || '未命名'}》\n\n${result.summary || ''}\n\n【风格锚定】${result.styleAnchor || ''}`,
+      textMode: 'editing' as const,
+      aspectRatio: 'Auto',
+      parentIds: [],
+    };
+
+    // —— 第 1 列：人物 / 场景 / 道具资产节点 ——
+    const assetNameToId = new Map<string, string>();
+    const makeAsset = (a: { name: string; prompt: string; desc: string }, kind: string, ratio: string): NodeData => {
+      const id = crypto.randomUUID();
+      assetNameToId.set(a.name, id);
+      return {
+        ...defaults,
+        id,
+        type: NodeType.IMAGE,
+        title: `${kind} · ${a.name}`,
+        x: 0, y: 0,
+        prompt: a.prompt || a.desc || a.name,
+        aspectRatio: ratio,
+        parentIds: [],
+      };
+    };
+    const assetNodes: NodeData[] = [
+      ...(result.characters || []).map(c => makeAsset(c, '角色', '3:4')),
+      ...(result.scenes || []).map(s => makeAsset(s, '场景', '16:9')),
+      ...(result.props || []).map(p => makeAsset(p, '道具', '1:1')),
+    ];
+
+    // —— 第 2 列：分镜图片节点（连线引用对应资产）——
+    const shotNodes: NodeData[] = (result.shots || []).map((shot, i) => {
+      const refNames = [...(shot.characters || []), shot.scene, ...(shot.props || [])].filter(Boolean) as string[];
+      const parentIds = refNames
+        .map(name => assetNameToId.get(name))
+        .filter((id): id is string => !!id)
+        .slice(0, 6);
+      return {
+        ...defaults,
+        id: crypto.randomUUID(),
+        type: NodeType.IMAGE,
+        title: `分镜 ${String(i + 1).padStart(2, '0')}`,
+        x: 0, y: 0,
+        prompt: shot.imagePrompt || shot.description || '',
+        aspectRatio: '16:9',
+        parentIds,
+      };
+    });
+
+    // —— 第 3 列：视频节点（连线引用分镜图）——
+    const videoNodes: NodeData[] = (result.shots || []).map((shot, i) => ({
+      ...defaults,
+      id: crypto.randomUUID(),
+      type: NodeType.VIDEO,
+      title: `镜头 ${String(i + 1).padStart(2, '0')} 视频`,
+      x: 0, y: 0,
+      prompt: [shot.videoPrompt || shot.description || '', shot.dialogue ? `台词：${shot.dialogue}` : ''].filter(Boolean).join('\n'),
+      aspectRatio: '16:9',
+      videoDuration: Math.max(2, Math.min(15, Number(shot.duration) || 6)),
+      parentIds: [shotNodes[i].id],
+    }));
+
+    // —— 分列布局（与一键排版一致的间距规则）——
+    const columns: NodeData[][] = [[textNode], assetNodes, shotNodes, videoNodes].filter(col => col.length > 0);
+    let colX = baseX;
+    columns.forEach(col => {
+      const colWidth = Math.max(...col.map(n => getNodeWidth(n)));
+      const heights = col.map(n => getNodeHeight(n));
+      const totalH = heights.reduce((s, h) => s + h, 0) + GAP_Y * (col.length - 1);
+      let y = -totalH / 2;
+      col.forEach((n, i) => {
+        n.x = colX;
+        n.y = y;
+        y += heights[i] + GAP_Y;
+      });
+      colX += colWidth + GAP_X;
+    });
+
+    const allNew = [textNode, ...assetNodes, ...shotNodes, ...videoNodes];
+    setNodes(prev => [...prev, ...allNew]);
+    setSelectedNodeIds(allNew.map(n => n.id));
+
+    // 视野自动定位到新工作流
+    {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      allNew.forEach(n => {
+        minX = Math.min(minX, n.x);
+        minY = Math.min(minY, n.y);
+        maxX = Math.max(maxX, n.x + getNodeWidth(n));
+        maxY = Math.max(maxY, n.y + getNodeHeight(n));
+      });
+      const bw = maxX - minX, bh = maxY - minY;
+      const margin = 120;
+      const zoom = Math.min(1, Math.max(0.1,
+        Math.min((window.innerWidth - margin * 2) / bw, (window.innerHeight - margin * 2) / bh)));
+      setViewport({
+        x: (window.innerWidth - bw * zoom) / 2 - minX * zoom,
+        y: (window.innerHeight - bh * zoom) / 2 - minY * zoom,
+        zoom,
+      });
+    }
+
+    // 自动生图：先资产后分镜（分镜在 effect 中等资产完成后触发）
+    if (opts.autoGenerate && assetNodes.length > 0) {
+      storyAutoGenRef.current = {
+        assetIds: assetNodes.map(n => n.id),
+        shotIds: shotNodes.map(n => n.id),
+        phase: 'assets',
+      };
+      setTimeout(() => {
+        assetNodes.forEach((n, i) => {
+          setTimeout(() => handleGenerateRef.current(n.id), i * 800);
+        });
+      }, 300);
+    } else {
+      storyAutoGenRef.current = null;
+    }
+  }, [nodes, setNodes, setSelectedNodeIds, setViewport]);
 
   const handleEditStoryboard = React.useCallback((groupId: string) => {
     const group = groups.find(g => g.id === groupId);
@@ -988,6 +1157,7 @@ export default function App() {
           onHistoryClick={handleHistoryClick}
           onAssetsClick={handleAssetsClick}
           onStoryboardClick={storyboardGenerator.openModal}
+          onStoryWorkflowClick={() => setIsStoryWorkflowOpen(true)}
           onVideoStudioClick={() => setIsVideoStudioOpen(true)}
           onToolsOpen={() => {
             closeWorkflowPanel();
@@ -1031,6 +1201,13 @@ export default function App() {
         onClose={() => setIsCreateAssetModalOpen(false)}
         nodeToSnapshot={nodeToSnapshot}
         onSave={handleSaveAssetToLibrary}
+      />
+
+      {/* Story Workflow Modal (一键创建工作流) */}
+      <StoryWorkflowModal
+        isOpen={isStoryWorkflowOpen}
+        onClose={() => setIsStoryWorkflowOpen(false)}
+        onCreate={handleCreateStoryWorkflow}
       />
 
       {/* Storyboard Generator Modal */}

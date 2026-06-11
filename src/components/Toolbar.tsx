@@ -8,7 +8,8 @@ import {
   MoreHorizontal,
   Plus,
   Film,
-  Scissors
+  Scissors,
+  Wand2
 } from 'lucide-react';
 
 // ============================================================================
@@ -21,6 +22,7 @@ interface ToolbarProps {
   onHistoryClick?: (e: React.MouseEvent) => void;
   onAssetsClick?: (e: React.MouseEvent) => void;
   onStoryboardClick?: (e: React.MouseEvent) => void;
+  onStoryWorkflowClick?: (e: React.MouseEvent) => void;
   onVideoStudioClick?: (e: React.MouseEvent) => void;
   onToolsOpen?: () => void; // Called when tools dropdown opens to close other panels
   canvasTheme?: 'dark' | 'light';
@@ -36,6 +38,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onHistoryClick,
   onAssetsClick,
   onStoryboardClick,
+  onStoryWorkflowClick,
   onVideoStudioClick,
   onToolsOpen,
   canvasTheme = 'dark'
@@ -127,6 +130,21 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           {isToolsOpen && (
             <div className={`absolute left-10 top-0 rounded-lg shadow-2xl py-2 min-w-[240px] z-50 ${isDark ? 'bg-[#1a1a1a] border border-neutral-700' : 'bg-white border border-neutral-200'
               }`}>
+              {/* Story Workflow (一键创建工作流) */}
+              <button
+                onClick={handleToolClick(onStoryWorkflowClick)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 transition-colors group ${isDark ? 'hover:bg-neutral-800' : 'hover:bg-neutral-100'
+                  }`}
+              >
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-gradient-to-br from-cyan-500/25 to-violet-500/25">
+                  <Wand2 size={16} className="text-cyan-400" />
+                </div>
+                <div className="text-left">
+                  <p className={`text-sm ${isDark ? 'text-neutral-200 group-hover:text-white' : 'text-neutral-700 group-hover:text-neutral-900'}`}>一键创作</p>
+                  <p className={`text-xs ${isDark ? 'text-neutral-500' : 'text-neutral-400'}`}>小说/剧本 → 完整工作流</p>
+                </div>
+              </button>
+
               {/* Storyboard Generator */}
               <button
                 onClick={handleToolClick(onStoryboardClick)}

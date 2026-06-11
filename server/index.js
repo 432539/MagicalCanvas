@@ -15,6 +15,7 @@ import generationRoutes from './routes/generation.js';
 import localModelsRoutes from './routes/local-models.js';
 import storyboardRoutes from './routes/storyboard.js';
 import videoStudioRoutes from './routes/video-studio.js';
+import storyWorkflowRoutes from './routes/story-workflow.js';
 import { getKey, getAllSettings, saveConfig, SETTINGS_KEYS } from './config.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -245,6 +246,9 @@ app.use('/api/local-models', localModelsRoutes);
 
 // Mount Storyboard routes (AI script generation)
 app.use('/api/storyboard', storyboardRoutes);
+
+// Mount story workflow routes (一键创建工作流)
+app.use('/api/story-workflow', storyWorkflowRoutes);
 
 // NOTE: Old Kling helpers removed - now in server/services/kling.js
 
