@@ -511,21 +511,39 @@ export default function App() {
     }
   }, [nodes]);
 
-  // 批量重试：把所有失败的图片/视频节点重置为待生成，交给并发队列（图片先行，视频随后）
-  const failedNodeCount = nodes.filter(n => n.status === NodeStatus.ERROR && n.type !== NodeType.TEXT).length;
-  const handleRetryFailed = React.useCallback(() => {
-    const failed = nodes.filter(n => n.status === NodeStatus.ERROR && n.type !== NodeType.TEXT);
-    if (failed.length === 0) return;
-    const failedIds = new Set(failed.map(n => n.id));
-    const imageIds = failed.filter(n => n.type !== NodeType.VIDEO).map(n => n.id);
-    const videoIds = failed.filter(n => n.type === NodeType.VIDEO).map(n => n.id);
-    setNodes(prev => prev.map(n => failedIds.has(n.id) ? { ...n, status: NodeStatus.IDLE, errorMessage: undefined } : n));
+  // 批量生成：图片/视频分开统计「未生成 / 失败 / 全部」，重置状态后交给并发队列
+  const [isBatchGenOpen, setIsBatchGenOpen] = useState(false);
+
+  const isImageGenNode = (n: NodeData) => n.type === NodeType.IMAGE && !!(n.prompt || '').trim();
+  const isVideoGenNode = (n: NodeData) => n.type === NodeType.VIDEO && !!(n.prompt || '').trim();
+  const matchScope = (n: NodeData, scope: 'idle' | 'failed' | 'all') =>
+    scope === 'idle' ? (n.status === NodeStatus.IDLE && !n.resultUrl)
+      : scope === 'failed' ? n.status === NodeStatus.ERROR
+        : true;
+
+  const batchGenCounts = React.useMemo(() => {
+    const imgs = nodes.filter(isImageGenNode);
+    const vids = nodes.filter(isVideoGenNode);
+    return {
+      image: { idle: imgs.filter(n => matchScope(n, 'idle')).length, failed: imgs.filter(n => matchScope(n, 'failed')).length, all: imgs.length },
+      video: { idle: vids.filter(n => matchScope(n, 'idle')).length, failed: vids.filter(n => matchScope(n, 'failed')).length, all: vids.length },
+    };
+  }, [nodes]);
+  const failedNodeCount = batchGenCounts.image.failed + batchGenCounts.video.failed;
+
+  const handleBatchGenerate = React.useCallback((kind: 'image' | 'video', scope: 'idle' | 'failed' | 'all') => {
+    const targets = nodes.filter(n => (kind === 'image' ? isImageGenNode(n) : isVideoGenNode(n)) && matchScope(n, scope));
+    if (targets.length === 0) return;
+    const ids = new Set(targets.map(n => n.id));
+    // 重置为待生成（清掉失败信息），由并发队列按 3 个一批调度
+    setNodes(prev => prev.map(n => ids.has(n.id) ? { ...n, status: NodeStatus.IDLE, errorMessage: undefined } : n));
     storyAutoGenRef.current = {
-      assetIds: imageIds,
-      shotIds: videoIds,
+      assetIds: kind === 'image' ? targets.map(n => n.id) : [],
+      shotIds: kind === 'video' ? targets.map(n => n.id) : [],
       phase: 'assets',
       launched: new Set(),
     };
+    setIsBatchGenOpen(false);
   }, [nodes, setNodes]);
 
   const handleCreateStoryWorkflow = React.useCallback((result: StoryWorkflowResult, opts: { autoGenerate: boolean; aspectRatio?: string }) => {
@@ -1575,19 +1593,54 @@ export default function App() {
             <LayoutGrid size={13} />
             一键排版
           </button>
-          {failedNodeCount > 0 && (
-            <>
-              <div className={`w-px h-4 ${canvasTheme === 'dark' ? 'bg-neutral-700' : 'bg-neutral-300'}`} />
-              <button
-                onClick={handleRetryFailed}
-                className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-full text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
-                title="重新生成所有失败的图片/视频节点（图片优先，最多 3 个并发）"
-              >
-                <RotateCcw size={13} />
-                重试失败 ({failedNodeCount})
-              </button>
-            </>
-          )}
+          <div className={`w-px h-4 ${canvasTheme === 'dark' ? 'bg-neutral-700' : 'bg-neutral-300'}`} />
+          <div className="relative">
+            <button
+              onClick={() => setIsBatchGenOpen(v => !v)}
+              disabled={batchGenCounts.image.all + batchGenCounts.video.all === 0}
+              className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full transition-colors disabled:opacity-40 ${failedNodeCount > 0
+                ? 'text-red-400 hover:bg-red-500/10 hover:text-red-300'
+                : canvasTheme === 'dark' ? 'text-neutral-300 hover:bg-neutral-800 hover:text-white' : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'}`}
+              title="批量生成图片/视频（未生成、失败或全部，最多 3 个并发）"
+            >
+              <RotateCcw size={13} />
+              批量生成{failedNodeCount > 0 ? ` (${failedNodeCount} 失败)` : ''}
+            </button>
+
+            {isBatchGenOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setIsBatchGenOpen(false)} />
+                <div className={`absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-50 w-[300px] p-3 rounded-xl border shadow-2xl ${canvasTheme === 'dark' ? 'bg-neutral-900 border-neutral-700' : 'bg-white border-neutral-200'}`}>
+                  {([
+                    { kind: 'image' as const, label: '图片', counts: batchGenCounts.image },
+                    { kind: 'video' as const, label: '视频', counts: batchGenCounts.video },
+                  ]).map(({ kind, label, counts }) => (
+                    <div key={kind} className="flex items-center gap-2 py-1.5">
+                      <span className={`text-xs font-medium w-8 shrink-0 ${canvasTheme === 'dark' ? 'text-neutral-300' : 'text-neutral-700'}`}>{label}</span>
+                      {([
+                        { scope: 'idle' as const, text: '未生成', count: counts.idle, cls: 'text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/10' },
+                        { scope: 'failed' as const, text: '失败', count: counts.failed, cls: 'text-red-400 border-red-500/30 hover:bg-red-500/10' },
+                        { scope: 'all' as const, text: '全部', count: counts.all, cls: 'text-violet-400 border-violet-500/30 hover:bg-violet-500/10' },
+                      ]).map(({ scope, text, count, cls }) => (
+                        <button
+                          key={scope}
+                          onClick={() => handleBatchGenerate(kind, scope)}
+                          disabled={count === 0}
+                          className={`flex-1 px-2 py-1.5 text-[11px] rounded-lg border transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${cls}`}
+                          title={scope === 'all' ? `重新生成全部${label}（包括已生成的）` : undefined}
+                        >
+                          {text} {count}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                  <div className={`mt-1.5 pt-1.5 border-t text-[10px] ${canvasTheme === 'dark' ? 'border-neutral-800 text-neutral-600' : 'border-neutral-100 text-neutral-400'}`}>
+                    最多 3 个并发，按队列依次生成；「全部」会重新生成已有内容
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 
