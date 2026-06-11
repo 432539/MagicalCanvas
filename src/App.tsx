@@ -1292,22 +1292,30 @@ export default function App() {
             pointerEvents: 'none'
           }}
         >
-          {/* Background Grid：细网格线 + 每 5 格一条加粗主线 */}
-          <div
-            className="absolute -top-[10000px] -left-[10000px] w-[20000px] h-[20000px]"
-            style={{
-              backgroundImage: canvasTheme === 'dark'
-                ? `linear-gradient(rgba(255,255,255,0.055) 1px, transparent 1px),
-                   linear-gradient(90deg, rgba(255,255,255,0.055) 1px, transparent 1px),
-                   linear-gradient(rgba(255,255,255,0.12) 1px, transparent 1px),
-                   linear-gradient(90deg, rgba(255,255,255,0.12) 1px, transparent 1px)`
-                : `linear-gradient(rgba(0,0,0,0.06) 1px, transparent 1px),
-                   linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px),
-                   linear-gradient(rgba(0,0,0,0.13) 1px, transparent 1px),
-                   linear-gradient(90deg, rgba(0,0,0,0.13) 1px, transparent 1px)`,
-              backgroundSize: '28px 28px, 28px 28px, 140px 140px, 140px 140px'
-            }}
-          />
+          {/* Background Grid：细网格线 + 每 5 格一条加粗主线。
+              线宽按缩放补偿：缩小时屏幕上始终 ≥1px 可见，放大时等比加粗；
+              缩得过小时细网格自动隐藏，只保留主线，避免糊成一片 */}
+          {(() => {
+            const z = viewport.zoom || 1;
+            const lwMinor = Math.max(1, 1 / z);      // 细线宽（画布像素）≈ 屏幕 1px
+            const lwMajor = Math.max(1.4, 1.6 / z);  // 主线更粗，放大时随画布加粗
+            const showMinor = z * 28 >= 13;          // 细格屏幕间距 <13px 时隐藏
+            const minorColor = canvasTheme === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.065)';
+            const majorColor = canvasTheme === 'dark' ? 'rgba(255,255,255,0.13)' : 'rgba(0,0,0,0.14)';
+            const mc = showMinor ? minorColor : 'transparent';
+            return (
+              <div
+                className="absolute -top-[10000px] -left-[10000px] w-[20000px] h-[20000px]"
+                style={{
+                  backgroundImage: `linear-gradient(${mc} ${lwMinor}px, transparent ${lwMinor}px),
+                     linear-gradient(90deg, ${mc} ${lwMinor}px, transparent ${lwMinor}px),
+                     linear-gradient(${majorColor} ${lwMajor}px, transparent ${lwMajor}px),
+                     linear-gradient(90deg, ${majorColor} ${lwMajor}px, transparent ${lwMajor}px)`,
+                  backgroundSize: '28px 28px, 28px 28px, 140px 140px, 140px 140px'
+                }}
+              />
+            );
+          })()}
 
           {/* SVG Layer for Connections */}
           <svg className="absolute top-0 left-0 w-full h-full overflow-visible pointer-events-none z-0">
