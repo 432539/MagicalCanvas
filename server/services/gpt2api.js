@@ -184,18 +184,55 @@ export async function generateGpt2apiVideo({ prompt, imageBase64, lastFrameBase6
 }
 
 /**
- * 文本对话（OpenAI 兼容）。返回模型回复字符串（非流式）。
+ * 文本对话（OpenAI 兼容）。返回模型回复字符串。
+ * 使用 SSE 流式接收再拼装：慢速推理模型（如 gpt-5 系列）非流式请求
+ * 容易被中转网关 1~2 分钟超时掐断，流式则不受影响。
  */
 export async function gpt2apiChat({ messages, model, baseUrl, apiKey, temperature = 0.7, maxTokens }) {
     if (!apiKey) throw new Error('未配置 gpt2api API Key（请在「设置」中填写）');
     const base = (baseUrl || 'https://www.gpt2api.com/v1').replace(/\/+$/, '');
 
-    const body = { model, messages, temperature, stream: false };
+    const body = { model, messages, temperature, stream: true };
     if (maxTokens) body.max_tokens = maxTokens;
 
     const res = await fetch(`${base}/chat/completions`, { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(body) });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data?.error?.message || data?.error || `gpt2api 文本请求失败 (HTTP ${res.status})`);
 
-    return data?.choices?.[0]?.message?.content || '';
+    if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error?.message || data?.error || `gpt2api 文本请求失败 (HTTP ${res.status})`);
+    }
+
+    const contentType = res.headers.get('content-type') || '';
+    // 部分网关会忽略 stream 参数直接返回 JSON，做好兼容
+    if (contentType.includes('application/json')) {
+        const data = await res.json().catch(() => ({}));
+        if (data?.error) throw new Error(data.error.message || data.error);
+        return data?.choices?.[0]?.message?.content || '';
+    }
+
+    // 解析 SSE 流，拼接 delta.content
+    let full = '';
+    let buffer = '';
+    const decoder = new TextDecoder();
+    for await (const chunk of res.body) {
+        buffer += decoder.decode(chunk, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // 留下不完整的最后一行
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data:')) continue;
+            const payload = trimmed.slice(5).trim();
+            if (payload === '[DONE]') continue;
+            try {
+                const json = JSON.parse(payload);
+                if (json?.error) throw new Error(json.error.message || json.error);
+                const delta = json?.choices?.[0]?.delta?.content;
+                if (delta) full += delta;
+            } catch (e) {
+                if (e instanceof SyntaxError) continue; // 跳过非 JSON 行
+                throw e;
+            }
+        }
+    }
+    return full;
 }
