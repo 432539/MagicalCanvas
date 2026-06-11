@@ -9,6 +9,26 @@ import React, { useRef, useState, useEffect } from 'react';
 import { Loader2, Maximize2, ImageIcon as ImageIcon, Film, Upload, Pencil, Video, GripVertical, Download, Expand, Shrink, HardDrive } from 'lucide-react';
 import { NodeData, NodeStatus, NodeType } from '../../types';
 
+/**
+ * 带自动重试的图片：批量生成时浏览器同域并发连接（最多 6 个）可能被生图请求占满，
+ * 图片首次加载失败后若不重试会一直显示裂图。失败后按递增间隔重试加载。
+ */
+const RetryImage: React.FC<{ src: string; alt?: string; className?: string }> = ({ src, alt, className }) => {
+    const [attempt, setAttempt] = useState(0);
+    useEffect(() => { setAttempt(0); }, [src]);
+    const effectiveSrc = attempt === 0 ? src : `${src}${src.includes('?') ? '&' : '?'}__retry=${attempt}`;
+    return (
+        <img
+            src={effectiveSrc}
+            alt={alt}
+            className={className}
+            onError={() => {
+                if (attempt < 8) setTimeout(() => setAttempt(a => a + 1), Math.min(1000 * (attempt + 1), 5000));
+            }}
+        />
+    );
+};
+
 interface NodeContentProps {
     data: NodeData;
     inputUrl?: string;
@@ -127,7 +147,7 @@ export const NodeContent: React.FC<NodeContentProps> = ({
                     {isVideoType ? (
                         <video src={data.resultUrl} controls loop className="w-full h-full object-cover" />
                     ) : (
-                        <img src={data.resultUrl} alt="已生成" className="w-full h-full object-cover pointer-events-none" />
+                        <RetryImage src={data.resultUrl} alt="已生成" className="w-full h-full object-cover pointer-events-none" />
                     )}
 
                     {/* Regenerating Overlay - Shows when loading with existing content */}

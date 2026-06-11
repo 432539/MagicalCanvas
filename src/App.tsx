@@ -469,24 +469,44 @@ export default function App() {
   // ============================================================================
   const [isStoryWorkflowOpen, setIsStoryWorkflowOpen] = useState(false);
 
-  // 自动生图队列：先生成资产图，全部完成后再生成分镜图（分镜依赖资产图作图生图参考）
-  const storyAutoGenRef = useRef<{ assetIds: string[]; shotIds: string[]; phase: 'assets' | 'shots' | 'done' } | null>(null);
+  // 自动生图队列：先生成资产图，全部完成后再生成分镜图（分镜依赖资产图作图生图参考）。
+  // 用并发上限的队列驱动（而非一次性全部触发）：浏览器对同一域名最多 6 个并发连接，
+  // 十几个生图请求同时挂起会饿死图片预览请求，导致节点裂图。
+  const storyAutoGenRef = useRef<{ assetIds: string[]; shotIds: string[]; phase: 'assets' | 'shots' | 'done'; launched: Set<string> } | null>(null);
 
   useEffect(() => {
     const st = storyAutoGenRef.current;
-    if (!st || st.phase !== 'assets') return;
-    const assetNodes = nodes.filter(n => st.assetIds.includes(n.id));
-    if (assetNodes.length === 0) return;
-    const allDone = assetNodes.every(n => n.status === NodeStatus.SUCCESS || n.status === NodeStatus.ERROR);
-    const anyStarted = assetNodes.some(n => n.status !== NodeStatus.IDLE);
-    if (anyStarted && allDone) {
-      st.phase = 'shots';
-      console.log('[StoryWorkflow] 资产图生成完毕，开始生成分镜图:', st.shotIds.length);
-      st.shotIds.forEach((id, i) => {
-        setTimeout(() => handleGenerateRef.current(id), i * 1200);
+    if (!st || st.phase === 'done') return;
+    const MAX_CONCURRENT = 3;
+    const isDone = (n: NodeData) => n.status === NodeStatus.SUCCESS || n.status === NodeStatus.ERROR;
+
+    const ids = st.phase === 'assets' ? st.assetIds : st.shotIds;
+    const tracked = nodes.filter(n => ids.includes(n.id));
+    if (tracked.length === 0) return;
+
+    // 当前阶段全部完成 → 进入下一阶段
+    if (tracked.every(isDone)) {
+      if (st.phase === 'assets') {
+        st.phase = 'shots';
+        console.log('[StoryWorkflow] 资产图生成完毕，开始生成分镜图:', st.shotIds.length);
+        // 触发一次重渲染让队列继续跑（nodes 引用未变时 effect 不会自动重跑）
+        setNodes(prev => [...prev]);
+      } else {
+        st.phase = 'done';
+        console.log('[StoryWorkflow] 分镜图全部生成完毕');
+      }
+      return;
+    }
+
+    // 队列调度：保持最多 MAX_CONCURRENT 个并发生成
+    const inFlight = tracked.filter(n => st.launched.has(n.id) && !isDone(n)).length;
+    const pending = tracked.filter(n => !st.launched.has(n.id));
+    const slots = MAX_CONCURRENT - inFlight;
+    if (slots > 0 && pending.length > 0) {
+      pending.slice(0, slots).forEach((n, i) => {
+        st.launched.add(n.id);
+        setTimeout(() => handleGenerateRef.current(n.id), i * 400);
       });
-      // 分镜触发完毕即标记结束（分镜各自异步生成）
-      setTimeout(() => { if (storyAutoGenRef.current === st) st.phase = 'done'; }, st.shotIds.length * 1200 + 1000);
     }
   }, [nodes]);
 
@@ -617,18 +637,14 @@ export default function App() {
       });
     }
 
-    // 自动生图：先资产后分镜（分镜在 effect 中等资产完成后触发）
+    // 自动生图：先资产后分镜（由 effect 中的并发队列驱动，限制同时生成数量）
     if (opts.autoGenerate && assetNodes.length > 0) {
       storyAutoGenRef.current = {
         assetIds: assetNodes.map(n => n.id),
         shotIds: shotNodes.map(n => n.id),
         phase: 'assets',
+        launched: new Set(),
       };
-      setTimeout(() => {
-        assetNodes.forEach((n, i) => {
-          setTimeout(() => handleGenerateRef.current(n.id), i * 800);
-        });
-      }, 300);
     } else {
       storyAutoGenRef.current = null;
     }
