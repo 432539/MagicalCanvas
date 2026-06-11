@@ -923,6 +923,20 @@ export default function App() {
    */
   const handleAutoLayout = React.useCallback(() => {
     if (nodes.length === 0) return;
+
+    // 优先用 DOM 实测尺寸（最准确，涵盖竖图限高、控件高度等），未渲染时退回估算
+    const sizeOf = (n: NodeData): { w: number; h: number } => {
+      const el = document.querySelector(`[data-node-id="${n.id}"]`) as HTMLElement | null;
+      if (el && viewport.zoom > 0) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) {
+          return { w: r.width / viewport.zoom, h: r.height / viewport.zoom };
+        }
+      }
+      return { w: getNodeWidth(n), h: getNodeHeight(n) };
+    };
+    const sizes = new Map(nodes.map(n => [n.id, sizeOf(n)]));
+
     const byId = new Map(nodes.map(n => [n.id, n]));
     const depthCache = new Map<string, number>();
     const depthOf = (n: NodeData, stack: Set<string>): number => {
@@ -969,8 +983,8 @@ export default function App() {
     let colX = 0;
     sortedDepths.forEach(d => {
       const arr = cols.get(d)!;
-      const colWidth = Math.max(...arr.map(n => getNodeWidth(n)));
-      const heights = arr.map(n => getNodeHeight(n));
+      const colWidth = Math.max(...arr.map(n => sizes.get(n.id)!.w));
+      const heights = arr.map(n => sizes.get(n.id)!.h);
       const totalH = heights.reduce((s, h) => s + h, 0) + GAP_Y * (arr.length - 1);
       let y = -totalH / 2;
       arr.forEach((n, i) => {
@@ -987,10 +1001,11 @@ export default function App() {
     nodes.forEach(n => {
       const p = pos.get(n.id);
       if (!p) return;
+      const s = sizes.get(n.id)!;
       minX = Math.min(minX, p.x);
       minY = Math.min(minY, p.y);
-      maxX = Math.max(maxX, p.x + getNodeWidth(n));
-      maxY = Math.max(maxY, p.y + getNodeHeight(n));
+      maxX = Math.max(maxX, p.x + s.w);
+      maxY = Math.max(maxY, p.y + s.h);
     });
     const bw = maxX - minX, bh = maxY - minY;
     const margin = 120;
@@ -1001,7 +1016,7 @@ export default function App() {
       y: (window.innerHeight - bh * zoom) / 2 - minY * zoom,
       zoom,
     });
-  }, [nodes, setNodes, setViewport]);
+  }, [nodes, viewport.zoom, setNodes, setViewport]);
 
   // 防止把文件拖进窗口时浏览器/Electron 直接打开该文件（覆盖整个应用页面）
   useEffect(() => {

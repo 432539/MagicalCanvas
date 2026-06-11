@@ -57,6 +57,21 @@ export const getNodeWidth = (node: NodeData, parentNode?: NodeData): number => {
     if (node.type === NodeType.VIDEO) return 385;
     // Camera Angle nodes have fixed width
     if (node.type === NodeType.CAMERA_ANGLE) return 340;
+
+    // 竖版图片：限高收窄（与 CanvasNode 的卡片宽度规则保持一致）
+    if (
+        (node.type === NodeType.IMAGE || node.type === NodeType.LOCAL_IMAGE_MODEL) &&
+        node.status === NodeStatus.SUCCESS && node.resultUrl && node.resultAspectRatio
+    ) {
+        const parts = node.resultAspectRatio.split('/');
+        if (parts.length === 2) {
+            const ar = parseFloat(parts[0]) / parseFloat(parts[1]);
+            if (ar > 0 && ar < 1) {
+                return Math.max(240, Math.round(460 * ar));
+            }
+        }
+    }
+
     // Image and other nodes
     return 365;
 };
@@ -135,14 +150,10 @@ export const getNodeHeight = (node: NodeData, parentNode?: NodeData): number => 
         } else {
             aspectRatio = 16 / 9;
         }
-    } else if (hasContent && node.aspectRatio && node.aspectRatio !== 'Auto') {
-        // Use selected aspect ratio for content
-        const parts = node.aspectRatio.split(':');
-        if (parts.length === 2) {
-            aspectRatio = parseFloat(parts[0]) / parseFloat(parts[1]);
-        } else {
-            aspectRatio = 16 / 9;
-        }
+    } else if (hasContent) {
+        // 与 CanvasNode.getAspectRatioStyle 一致：无 resultAspectRatio 的旧内容
+        // 视频按 16:9 渲染，图片按 1:1 渲染
+        aspectRatio = node.type === NodeType.VIDEO ? 16 / 9 : 1;
     } else {
         // Empty/placeholder state: Both Image and Video use 4/3 (see NodeContent.tsx line 307)
         aspectRatio = 4 / 3;

@@ -176,6 +176,21 @@ export const CanvasNode: React.FC<CanvasNodeProps> = ({
     return { aspectRatio: `${w}/${h}` };
   };
 
+  // 竖版图片限高收窄：高度上限约 460px，按比例缩小卡片宽度（与 ConnectionsLayer.getNodeWidth 保持一致）
+  const getCardWidthStyle = (): React.CSSProperties | undefined => {
+    if (data.type === NodeType.VIDEO) return undefined;
+    if (isSuccess && data.resultUrl && data.resultAspectRatio) {
+      const parts = data.resultAspectRatio.split('/');
+      if (parts.length === 2) {
+        const ar = parseFloat(parts[0]) / parseFloat(parts[1]);
+        if (ar > 0 && ar < 1) {
+          return { width: Math.max(240, Math.round(460 * ar)) };
+        }
+      }
+    }
+    return undefined;
+  };
+
   const handleTitleSave = () => {
     setIsEditingTitle(false);
     const trimmed = editedTitle.trim();
@@ -194,6 +209,7 @@ export const CanvasNode: React.FC<CanvasNodeProps> = ({
   if (data.type === NodeType.IMAGE_EDITOR) {
     return (
       <div
+        data-node-id={data.id}
         className={`absolute flex items-center group/node touch-none pointer-events-auto`}
         style={{
           transform: `translate(${data.x}px, ${data.y}px)`,
@@ -254,6 +270,7 @@ export const CanvasNode: React.FC<CanvasNodeProps> = ({
   if (data.type === NodeType.CAMERA_ANGLE) {
     return (
       <div
+        data-node-id={data.id}
         className={`absolute flex items-center group/node touch-none pointer-events-auto`}
         style={{
           transform: `translate(${data.x}px, ${data.y}px)`,
@@ -460,6 +477,7 @@ export const CanvasNode: React.FC<CanvasNodeProps> = ({
 
     return (
       <div
+        data-node-id={data.id}
         className={`absolute flex items-center group/node touch-none pointer-events-auto`}
         style={{
           transform: `translate(${data.x}px, ${data.y}px)`,
@@ -530,6 +548,7 @@ export const CanvasNode: React.FC<CanvasNodeProps> = ({
 
   return (
     <div
+      data-node-id={data.id}
       className={`absolute group/node touch-none pointer-events-auto`}
       style={{
         transform: `translate(${data.x}px, ${data.y}px)`,
@@ -805,6 +824,7 @@ export const CanvasNode: React.FC<CanvasNodeProps> = ({
         {/* Main Node Card - Video nodes are wider to fit more controls */}
         <div
           className={`relative ${data.type === NodeType.VIDEO ? 'w-[385px]' : 'w-[365px]'} rounded-2xl border transition-all duration-300 flex flex-col shadow-2xl ${isDark ? 'bg-[#0f0f0f]' : 'bg-white'} ${selected ? 'border-blue-500/50 ring-1 ring-blue-500/30' : isDark ? 'border-neutral-800' : 'border-neutral-200'}`}
+          style={getCardWidthStyle()}
         >
           {/* Header (Editable Title) - Positioned horizontally on top-left side */}
           {isEditingTitle ? (
