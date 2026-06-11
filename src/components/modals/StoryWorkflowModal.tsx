@@ -6,7 +6,7 @@
  */
 
 import React, { useRef, useState } from 'react';
-import { X, Wand2, Upload, Loader2, BookOpen, Clock, Palette, Clapperboard, Zap } from 'lucide-react';
+import { X, Wand2, Upload, Loader2, BookOpen, Clock, Palette, Clapperboard, Zap, Monitor } from 'lucide-react';
 
 // ============================================================================
 // TYPES
@@ -43,7 +43,7 @@ export interface StoryWorkflowResult {
 interface StoryWorkflowModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onCreate: (result: StoryWorkflowResult, opts: { autoGenerate: boolean }) => void;
+    onCreate: (result: StoryWorkflowResult, opts: { autoGenerate: boolean; aspectRatio: string }) => void;
 }
 
 // ============================================================================
@@ -59,8 +59,12 @@ const STYLE_PRESETS: { label: string; anchor: string }[] = [
     { label: '赛博朋克', anchor: '赛博朋克风格，霓虹光效，高对比明暗，未来都市，冷暖撞色' },
 ];
 
-const DURATION_OPTIONS = [4, 6, 8, 10];
+const DURATION_OPTIONS = [4, 6, 8, 10, 12, 15];
 const SHOT_COUNT_OPTIONS = [6, 9, 12, 15, 20];
+const RATIO_OPTIONS: { value: string; label: string }[] = [
+    { value: '16:9', label: '16:9 横屏' },
+    { value: '9:16', label: '9:16 竖屏' },
+];
 
 // ============================================================================
 // COMPONENT
@@ -70,6 +74,7 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
     const [script, setScript] = useState('');
     const [shotDuration, setShotDuration] = useState(6);
     const [maxShots, setMaxShots] = useState(12);
+    const [aspectRatio, setAspectRatio] = useState('16:9');
     const [styleIdx, setStyleIdx] = useState<number | null>(0);
     const [customStyle, setCustomStyle] = useState('');
     const [autoGenerate, setAutoGenerate] = useState(false);
@@ -110,11 +115,12 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
                     shotDuration,
                     maxShots,
                     style: effectiveStyle,
+                    aspectRatio,
                 }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data?.error || '剧本分析失败');
-            onCreate(data as StoryWorkflowResult, { autoGenerate });
+            onCreate(data as StoryWorkflowResult, { autoGenerate, aspectRatio });
             onClose();
         } catch (err: any) {
             setError(err?.message || '剧本分析失败，请重试');
@@ -185,25 +191,48 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
                         <div className="mt-1 text-right text-[10px] text-neutral-600">{script.length} 字</div>
                     </div>
 
-                    {/* 参数行：时长 + 分镜数 */}
+                    {/* 单镜头时长 */}
+                    <div>
+                        <label className={labelCls}>
+                            <Clock size={13} className="text-neutral-500" />
+                            单镜头时长
+                        </label>
+                        <div className="flex gap-1.5">
+                            {DURATION_OPTIONS.map(d => (
+                                <button
+                                    key={d}
+                                    onClick={() => setShotDuration(d)}
+                                    disabled={loading}
+                                    className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors ${shotDuration === d
+                                        ? 'bg-cyan-500/15 border-cyan-500/50 text-cyan-300'
+                                        : 'bg-white/[0.03] border-white/[0.07] text-neutral-400 hover:text-white hover:bg-white/[0.07]'
+                                        }`}
+                                >
+                                    {d} 秒
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* 参数行：画幅比例 + 分镜数 */}
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <label className={labelCls}>
-                                <Clock size={13} className="text-neutral-500" />
-                                单镜头时长
+                                <Monitor size={13} className="text-neutral-500" />
+                                画幅比例（图片与视频统一）
                             </label>
                             <div className="flex gap-1.5">
-                                {DURATION_OPTIONS.map(d => (
+                                {RATIO_OPTIONS.map(r => (
                                     <button
-                                        key={d}
-                                        onClick={() => setShotDuration(d)}
+                                        key={r.value}
+                                        onClick={() => setAspectRatio(r.value)}
                                         disabled={loading}
-                                        className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors ${shotDuration === d
+                                        className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors ${aspectRatio === r.value
                                             ? 'bg-cyan-500/15 border-cyan-500/50 text-cyan-300'
                                             : 'bg-white/[0.03] border-white/[0.07] text-neutral-400 hover:text-white hover:bg-white/[0.07]'
                                             }`}
                                     >
-                                        {d} 秒
+                                        {r.label}
                                     </button>
                                 ))}
                             </div>

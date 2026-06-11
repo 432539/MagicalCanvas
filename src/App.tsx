@@ -490,9 +490,11 @@ export default function App() {
     }
   }, [nodes]);
 
-  const handleCreateStoryWorkflow = React.useCallback((result: StoryWorkflowResult, opts: { autoGenerate: boolean }) => {
+  const handleCreateStoryWorkflow = React.useCallback((result: StoryWorkflowResult, opts: { autoGenerate: boolean; aspectRatio?: string }) => {
     const GAP_X = 160;
     const GAP_Y = 70;
+    // 统一画幅：分镜图 / 视频 / 场景空镜都用用户选择的比例
+    const ratio = opts.aspectRatio === '9:16' ? '9:16' : '16:9';
 
     // 放到现有节点右侧，避免覆盖
     let baseX = 0;
@@ -539,7 +541,7 @@ export default function App() {
     };
     const assetNodes: NodeData[] = [
       ...(result.characters || []).map(c => makeAsset(c, '角色', '3:4')),
-      ...(result.scenes || []).map(s => makeAsset(s, '场景', '16:9')),
+      ...(result.scenes || []).map(s => makeAsset(s, '场景', ratio)),
       ...(result.props || []).map(p => makeAsset(p, '道具', '1:1')),
     ];
 
@@ -557,7 +559,7 @@ export default function App() {
         title: `分镜 ${String(i + 1).padStart(2, '0')}`,
         x: 0, y: 0,
         prompt: shot.imagePrompt || shot.description || '',
-        aspectRatio: '16:9',
+        aspectRatio: ratio,
         parentIds,
       };
     });
@@ -570,7 +572,7 @@ export default function App() {
       title: `镜头 ${String(i + 1).padStart(2, '0')} 视频`,
       x: 0, y: 0,
       prompt: [shot.videoPrompt || shot.description || '', shot.dialogue ? `台词：${shot.dialogue}` : ''].filter(Boolean).join('\n'),
-      aspectRatio: '16:9',
+      aspectRatio: ratio,
       videoDuration: Math.max(2, Math.min(15, Number(shot.duration) || 6)),
       parentIds: [shotNodes[i].id],
     }));
