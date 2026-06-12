@@ -60,7 +60,8 @@ const STYLE_PRESETS: { label: string; anchor: string }[] = [
 ];
 
 const DURATION_OPTIONS = [4, 6, 8, 10, 12, 15];
-const SHOT_COUNT_OPTIONS = [6, 9, 12, 15, 20];
+const SHOT_COUNT_MIN = 3;
+const SHOT_COUNT_MAX = 30;
 const RATIO_OPTIONS: { value: string; label: string }[] = [
     { value: '16:9', label: '16:9 横屏' },
     { value: '9:16', label: '9:16 竖屏' },
@@ -282,21 +283,25 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
                             <label className={labelCls}>
                                 <Clapperboard size={13} className="text-neutral-500" />
                                 分镜数量
+                                <span className="ml-auto text-cyan-300 font-semibold text-sm tabular-nums">{maxShots} 个</span>
                             </label>
-                            <div className="flex gap-1.5">
-                                {SHOT_COUNT_OPTIONS.map(c => (
-                                    <button
-                                        key={c}
-                                        onClick={() => setMaxShots(c)}
-                                        disabled={loading}
-                                        className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors ${maxShots === c
-                                            ? 'bg-cyan-500/15 border-cyan-500/50 text-cyan-300'
-                                            : 'bg-white/[0.03] border-white/[0.07] text-neutral-400 hover:text-white hover:bg-white/[0.07]'
-                                            }`}
-                                    >
-                                        {c}
-                                    </button>
-                                ))}
+                            <div className="flex items-center gap-2 px-1 py-2">
+                                <span className="text-[10px] text-neutral-600">{SHOT_COUNT_MIN}</span>
+                                <input
+                                    type="range"
+                                    min={SHOT_COUNT_MIN}
+                                    max={SHOT_COUNT_MAX}
+                                    step={1}
+                                    value={maxShots}
+                                    onChange={e => setMaxShots(Number(e.target.value))}
+                                    disabled={loading}
+                                    className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer bg-white/10 accent-cyan-400 disabled:opacity-40"
+                                    title="拖动设置分镜数量"
+                                />
+                                <span className="text-[10px] text-neutral-600">{SHOT_COUNT_MAX}</span>
+                            </div>
+                            <div className="text-[10px] text-neutral-600 px-1">
+                                约 {Math.round(maxShots * shotDuration)} 秒成片（{maxShots} 镜 × {shotDuration} 秒）
                             </div>
                         </div>
                     </div>

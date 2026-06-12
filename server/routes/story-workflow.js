@@ -83,7 +83,7 @@ router.post('/analyze', async (req, res) => {
             truncated = true;
         }
 
-        const shots = Math.max(3, Math.min(20, Number(maxShots) || 12));
+        const shots = Math.max(3, Math.min(30, Number(maxShots) || 12));
         const dur = Math.max(3, Math.min(15, Number(shotDuration) || 6));
 
         const ratioDesc = aspectRatio === '9:16'
