@@ -2480,7 +2480,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                             </button>
                         </div>
                     )}
-                    <div className="flex-1 min-h-0 overflow-y-auto p-2 grid grid-cols-[repeat(auto-fill,minmax(110px,1fr))] gap-2 content-start">
+                    <div className="flex-1 min-h-0 overflow-y-auto p-2 grid grid-cols-[repeat(auto-fill,minmax(110px,1fr))] auto-rows-max gap-2 content-start">
                         {libLoading && <div className="col-span-full flex justify-center py-6"><Loader2 className="animate-spin text-neutral-500" size={18} /></div>}
                         {!libLoading && filteredLibrary.length === 0 && (
                             <div className="col-span-full text-center text-xs text-neutral-600 py-8">
