@@ -973,6 +973,56 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         probe.onerror = () => setErrorMsg('素材加载失败，无法添加');
     };
 
+    // ---- 一键添加：当前筛选下的全部素材按列表顺序（镜头编号升序）依次加入时间轴 ----
+    const [addingAll, setAddingAll] = useState(false);
+
+    /** 探测视频素材时长（秒），失败返回 0 */
+    const probeVideoDuration = (url: string): Promise<number> => new Promise(resolve => {
+        const probe = document.createElement('video');
+        probe.preload = 'metadata';
+        probe.src = url;
+        probe.onloadedmetadata = () => resolve(isFinite(probe.duration) && probe.duration > 0 ? probe.duration : 5);
+        probe.onerror = () => resolve(0);
+    });
+
+    const handleAddAllToTimeline = async () => {
+        if (addingAll || filteredLibrary.length === 0) return;
+        setAddingAll(true);
+        setErrorMsg(null);
+        try {
+            // 并行探测全部视频时长，再按列表顺序一次性追加（保证镜头顺序）
+            const durations = await Promise.all(filteredLibrary.map(v =>
+                v.assetType === 'image' ? Promise.resolve(4) : probeVideoDuration(v.url.startsWith('http') ? v.url : `${v.url}`)
+            ));
+            const newClips: Clip[] = [];
+            let failed = 0;
+            filteredLibrary.forEach((v, i) => {
+                if (v.assetType === 'image') {
+                    newClips.push(buildClip(v, 600, 4, true));
+                } else if (durations[i] > 0) {
+                    newClips.push(buildClip(v, durations[i], durations[i], false));
+                } else {
+                    failed++;
+                }
+            });
+            if (newClips.length > 0) {
+                setClips(prev => {
+                    const next = [...prev, ...newClips];
+                    setTransitions(tp => {
+                        const need = Math.max(0, next.length - 1);
+                        const arr = [...tp];
+                        while (arr.length < need) arr.push({ type: 'none', duration: 0.5 });
+                        return arr.slice(0, need);
+                    });
+                    return next;
+                });
+            }
+            if (failed > 0) setErrorMsg(`${failed} 个素材加载失败，已跳过`);
+        } finally {
+            setAddingAll(false);
+        }
+    };
+
     /** 删除一组素材文件（逐个调用后端） */
     const removeAssets = async (list: LibraryAsset[]) => {
         setLibDeleting(true);
@@ -2184,6 +2234,18 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                             </div>
                             );
                         })}
+                        {/* 一键添加：当前筛选的素材按镜头顺序全部加入时间轴 */}
+                        {!libLoading && !libSelectMode && filteredLibrary.length > 0 && (
+                            <button
+                                onClick={handleAddAllToTimeline}
+                                disabled={addingAll}
+                                className="w-full mt-1 py-2 rounded-lg border border-dashed border-neutral-700 text-[11px] text-neutral-400 hover:text-cyan-300 hover:border-cyan-600 hover:bg-cyan-500/5 flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                                title="按列表顺序（镜头编号升序）把当前筛选的素材全部添加到时间轴"
+                            >
+                                {addingAll ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                                一键添加{libFilter === 'video' ? '全部视频' : libFilter === 'image' ? '全部图片' : '全部素材'}（{filteredLibrary.length}）
+                            </button>
+                        )}
                     </div>
                 </div>
 
