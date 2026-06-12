@@ -379,6 +379,59 @@ app.post('/api/library', async (req, res) => {
     }
 });
 
+// ---- 素材分类管理（categories.json，内置分类不可删除） ----
+const BUILTIN_CATEGORIES = ['Character', 'Scene', 'Item', 'Style', 'Sound Effect', 'Others'];
+const categoriesJsonPath = () => path.join(LIBRARY_ASSETS_DIR, 'categories.json');
+
+function loadCategories() {
+    let custom = [];
+    try {
+        if (fs.existsSync(categoriesJsonPath())) {
+            const parsed = JSON.parse(fs.readFileSync(categoriesJsonPath(), 'utf8'));
+            if (Array.isArray(parsed)) custom = parsed.filter(c => typeof c === 'string' && c.trim());
+        }
+    } catch (_) { /* 损坏时按无自定义分类处理 */ }
+    return { builtin: BUILTIN_CATEGORIES, custom };
+}
+
+app.get('/api/library/categories', (req, res) => {
+    res.json(loadCategories());
+});
+
+app.post('/api/library/categories', (req, res) => {
+    const name = String(req.body?.name || '').trim().slice(0, 30);
+    if (!name) return res.status(400).json({ error: '分类名称不能为空' });
+    const { builtin, custom } = loadCategories();
+    if (name === 'All' || builtin.includes(name) || custom.includes(name)) {
+        return res.status(409).json({ error: '该分类已存在' });
+    }
+    custom.push(name);
+    fs.writeFileSync(categoriesJsonPath(), JSON.stringify(custom, null, 2));
+    res.json({ builtin, custom });
+});
+
+app.delete('/api/library/categories/:name', (req, res) => {
+    const name = decodeURIComponent(req.params.name);
+    const { builtin, custom } = loadCategories();
+    if (builtin.includes(name)) return res.status(400).json({ error: '内置分类不可删除' });
+    if (!custom.includes(name)) return res.status(404).json({ error: '分类不存在' });
+    const next = custom.filter(c => c !== name);
+    fs.writeFileSync(categoriesJsonPath(), JSON.stringify(next, null, 2));
+    // 该分类下的素材归入 Others（文件不动，仅改归属）
+    const libraryJsonPath = path.join(LIBRARY_ASSETS_DIR, 'assets.json');
+    if (fs.existsSync(libraryJsonPath)) {
+        try {
+            const data = JSON.parse(fs.readFileSync(libraryJsonPath, 'utf8'));
+            let changed = false;
+            for (const a of data) {
+                if (a.category === name) { a.category = 'Others'; changed = true; }
+            }
+            if (changed) fs.writeFileSync(libraryJsonPath, JSON.stringify(data, null, 2));
+        } catch (_) { /* assets.json 损坏时跳过迁移 */ }
+    }
+    res.json({ builtin, custom: next });
+});
+
 // List library assets
 app.get('/api/library', async (req, res) => {
     try {

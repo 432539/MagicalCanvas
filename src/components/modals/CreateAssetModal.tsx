@@ -28,15 +28,43 @@ export const CreateAssetModal: React.FC<CreateAssetModalProps> = ({
     const [category, setCategory] = useState(CATEGORIES[0]);
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+    const [categories, setCategories] = useState<string[]>(CATEGORIES);
+    const [newCatName, setNewCatName] = useState('');
 
-    // Reset state when opening
+    // Reset state when opening + load custom categories
     useEffect(() => {
         if (isOpen) {
             setStatus('idle');
             setName('我的素材');
             setCategory(CATEGORIES[0]);
+            setNewCatName('');
+            fetch('http://localhost:3501/api/library/categories')
+                .then(r => r.ok ? r.json() : null)
+                .then(data => {
+                    if (data) setCategories([...data.builtin, ...data.custom]);
+                })
+                .catch(() => { /* 加载失败时用内置分类 */ });
         }
     }, [isOpen]);
+
+    const handleCreateCategory = async () => {
+        const n = newCatName.trim();
+        if (!n) return;
+        try {
+            const res = await fetch('http://localhost:3501/api/library/categories', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: n }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setCategories([...data.builtin, ...data.custom]);
+                setCategory(n);
+                setNewCatName('');
+                setIsDropdownOpen(false);
+            }
+        } catch (_) { /* 网络失败时保持原状 */ }
+    };
 
     if (!isOpen || !nodeToSnapshot) return null;
 
@@ -111,8 +139,8 @@ export const CreateAssetModal: React.FC<CreateAssetModalProps> = ({
                             </button>
 
                             {isDropdownOpen && (
-                                <div className="absolute top-[70px] left-0 right-0 bg-[#1a1a1a] border border-neutral-700 rounded-lg shadow-xl z-10 py-1">
-                                    {CATEGORIES.map(cat => (
+                                <div className="absolute top-[70px] left-0 right-0 bg-[#1a1a1a] border border-neutral-700 rounded-lg shadow-xl z-10 py-1 max-h-56 overflow-y-auto">
+                                    {categories.map(cat => (
                                         <button
                                             key={cat}
                                             onClick={() => {
@@ -125,6 +153,24 @@ export const CreateAssetModal: React.FC<CreateAssetModalProps> = ({
                                             {category === cat && <Check size={14} className="text-white" />}
                                         </button>
                                     ))}
+                                    {/* 新建自定义分类 */}
+                                    <div className="px-3 py-2 border-t border-neutral-800 flex items-center gap-1.5">
+                                        <input
+                                            value={newCatName}
+                                            onChange={e => setNewCatName(e.target.value)}
+                                            onKeyDown={e => { if (e.key === 'Enter') handleCreateCategory(); }}
+                                            onClick={e => e.stopPropagation()}
+                                            placeholder="新建分类…"
+                                            className="flex-1 min-w-0 bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs text-white outline-none focus:border-neutral-500"
+                                        />
+                                        <button
+                                            onClick={handleCreateCategory}
+                                            disabled={!newCatName.trim()}
+                                            className="text-xs px-2 py-1 rounded bg-neutral-700 hover:bg-neutral-600 text-white disabled:opacity-40"
+                                        >
+                                            添加
+                                        </button>
+                                    </div>
                                 </div>
                             )}
                         </div>

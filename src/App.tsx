@@ -51,7 +51,7 @@ import { StoryboardGeneratorModal } from './components/modals/StoryboardGenerato
 import { StoryboardVideoModal } from './components/modals/StoryboardVideoModal';
 import { StoryWorkflowModal, StoryWorkflowResult } from './components/modals/StoryWorkflowModal';
 import { VideoStudioPage } from './components/videoStudio/VideoStudioPage';
-import { AppDialogHost } from './components/ui/AppDialog';
+import { AppDialogHost, showAppAlert } from './components/ui/AppDialog';
 import { DesktopTitleBar } from './components/ui/DesktopTitleBar';
 
 // ============================================================================
@@ -945,7 +945,52 @@ export default function App() {
     }
   };
 
+  // 「替换素材」目标节点：非空时从素材库选中的素材会替换该节点内容而不是新建节点
+  const [replaceTargetId, setReplaceTargetId] = useState<string | null>(null);
+
+  const handleContextMenuReplaceAsset = () => {
+    const id = contextMenu.sourceNodeId;
+    const node = id ? nodes.find(n => n.id === id) : undefined;
+    if (!node || (node.type !== NodeType.IMAGE && node.type !== NodeType.VIDEO)) {
+      showAppAlert('只有图片或视频节点支持替换素材');
+      return;
+    }
+    setReplaceTargetId(id!);
+    openAssetLibraryModal(contextMenu.y, closeWorkflowPanel);
+  };
+
+  /** 用素材库选中的素材替换目标节点内容（自动检测宽高比，类型不同则切换节点类型） */
+  const replaceNodeAsset = (targetId: string, url: string, type: 'image' | 'video') => {
+    const apply = (resultAspectRatio?: string, aspectRatio?: string) => {
+      updateNode(targetId, {
+        type: type === 'video' ? NodeType.VIDEO : NodeType.IMAGE,
+        status: NodeStatus.SUCCESS,
+        resultUrl: url,
+        resultAspectRatio,
+        aspectRatio: aspectRatio || '16:9',
+        errorMessage: undefined,
+      });
+      setReplaceTargetId(null);
+      closeAssetLibrary();
+    };
+    if (type === 'image') {
+      const img = new Image();
+      img.onload = () => apply(`${img.naturalWidth}/${img.naturalHeight}`, getClosestAspectRatio(img.naturalWidth, img.naturalHeight));
+      img.onerror = () => apply(undefined, '16:9');
+      img.src = url;
+    } else {
+      const video = document.createElement('video');
+      video.onloadedmetadata = () => apply(`${video.videoWidth}/${video.videoHeight}`, getClosestVideoAspectRatio(video.videoWidth, video.videoHeight));
+      video.onerror = () => apply(undefined, '16:9');
+      video.src = url;
+    }
+  };
+
   const handleLibrarySelect = (url: string, type: 'image' | 'video') => {
+    if (replaceTargetId) {
+      replaceNodeAsset(replaceTargetId, url, type);
+      return;
+    }
     handleSelectAsset(type === 'image' ? 'images' : 'videos', url, '素材库项目');
     closeAssetLibrary();
   };
@@ -1258,7 +1303,7 @@ export default function App() {
 
       <AssetLibraryPanel
         isOpen={isAssetLibraryOpen}
-        onClose={closeAssetLibrary}
+        onClose={() => { setReplaceTargetId(null); closeAssetLibrary(); }}
         onSelectAsset={handleLibrarySelect}
         panelY={assetLibraryY}
         variant={assetLibraryVariant}
@@ -1567,6 +1612,7 @@ export default function App() {
         onCopy={handleCopy}
         onDuplicate={handleDuplicate}
         onCreateAsset={handleContextMenuCreateAsset}
+        onReplaceAsset={handleContextMenuReplaceAsset}
         onAddAssets={handleContextMenuAddAssets}
         canUndo={canUndo}
         canRedo={canRedo}

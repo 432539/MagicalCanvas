@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Trash2, Upload, Loader2 } from 'lucide-react';
+import { X, Trash2, Upload, Loader2, Plus } from 'lucide-react';
 import { showAppAlert } from './ui/AppDialog';
 
 interface LibraryAsset {
@@ -19,8 +19,7 @@ interface AssetLibraryPanelProps {
     canvasTheme?: 'dark' | 'light';
 }
 
-const CATEGORIES = [
-    'All',
+const BUILTIN_CATEGORIES = [
     'Character',
     'Scene',
     'Item',
@@ -39,11 +38,13 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
 }) => {
     const [selectedCategory, setSelectedCategory] = useState('All');
     const [assets, setAssets] = useState<LibraryAsset[]>([]);
+    const [customCategories, setCustomCategories] = useState<string[]>([]);
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
         if (isOpen) {
             fetchLibrary();
+            fetchCategories();
         }
     }, [isOpen]);
 
@@ -59,6 +60,45 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
         } finally {
             setLoading(false);
         }
+    };
+
+    const fetchCategories = async () => {
+        try {
+            const res = await fetch('http://localhost:3501/api/library/categories');
+            if (res.ok) {
+                const data = await res.json();
+                setCustomCategories(Array.isArray(data.custom) ? data.custom : []);
+            }
+        } catch (error) {
+            console.error('Failed to load categories:', error);
+        }
+    };
+
+    const handleAddCategory = async (name: string) => {
+        const res = await fetch('http://localhost:3501/api/library/categories', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            showAppAlert(data.error || '添加分类失败');
+            return;
+        }
+        setCustomCategories(data.custom);
+        setSelectedCategory(name);
+    };
+
+    const handleDeleteCategory = async (name: string) => {
+        const res = await fetch(`http://localhost:3501/api/library/categories/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) {
+            showAppAlert(data.error || '删除分类失败');
+            return;
+        }
+        setCustomCategories(data.custom);
+        if (selectedCategory === name) setSelectedCategory('All');
+        await fetchLibrary(); // 该分类下素材已归入 Others
     };
 
     // 导入本地视频/图片到素材库（归入当前分类，「All」时归入 Others）
@@ -148,6 +188,9 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                         canvasTheme={canvasTheme}
                         importing={importing}
                         onImportClick={() => importInputRef.current?.click()}
+                        customCategories={customCategories}
+                        onAddCategory={handleAddCategory}
+                        onDeleteCategory={handleDeleteCategory}
                     />
                 </div>
                 {/* Click outside to close */}
@@ -173,6 +216,9 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                 canvasTheme={canvasTheme}
                 importing={importing}
                 onImportClick={() => importInputRef.current?.click()}
+                customCategories={customCategories}
+                onAddCategory={handleAddCategory}
+                onDeleteCategory={handleDeleteCategory}
             />
         </div>
     );
@@ -182,10 +228,22 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
 const AssetLibraryContent = ({
     selectedCategory, setSelectedCategory,
     assets, loading, onSelectAsset, onDeleteAsset, variant, canvasTheme = 'dark',
-    importing, onImportClick
+    importing, onImportClick,
+    customCategories = [], onAddCategory, onDeleteCategory
 }: any) => {
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+    const [addingCategory, setAddingCategory] = useState(false);
+    const [newCategoryName, setNewCategoryName] = useState('');
     const isDark = canvasTheme === 'dark';
+
+    const allCategories: string[] = ['All', ...BUILTIN_CATEGORIES, ...customCategories];
+
+    const submitNewCategory = () => {
+        const name = newCategoryName.trim();
+        setAddingCategory(false);
+        setNewCategoryName('');
+        if (name) onAddCategory?.(name);
+    };
 
     const filteredAssets = assets.filter((asset: any) =>
         selectedCategory === 'All' || asset.category === selectedCategory
@@ -212,19 +270,51 @@ const AssetLibraryContent = ({
             <div className="p-4 flex flex-col gap-4 h-full overflow-hidden">
                 {/* Filters + 导入 */}
                 <div className="flex items-center gap-2 shrink-0">
-                    <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide flex-1 min-w-0">
-                        {CATEGORIES.map(cat => (
+                    <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide flex-1 min-w-0 items-center">
+                        {allCategories.map(cat => {
+                            const isCustom = customCategories.includes(cat);
+                            return (
+                                <div key={cat} className="relative group/cat shrink-0">
+                                    <button
+                                        onClick={() => setSelectedCategory(cat)}
+                                        className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${selectedCategory === cat
+                                            ? isDark ? 'bg-neutral-100 text-black border-white' : 'bg-neutral-900 text-white border-neutral-900'
+                                            : isDark ? 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:border-neutral-600' : 'bg-white text-neutral-600 border-neutral-200 hover:border-neutral-300'
+                                            }`}
+                                    >
+                                        {cat}
+                                    </button>
+                                    {isCustom && (
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); onDeleteCategory?.(cat); }}
+                                            className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 text-white items-center justify-center hidden group-hover/cat:flex hover:bg-red-600"
+                                            title="删除该分类（素材将归入 Others）"
+                                        >
+                                            <X size={9} />
+                                        </button>
+                                    )}
+                                </div>
+                            );
+                        })}
+                        {addingCategory ? (
+                            <input
+                                autoFocus
+                                value={newCategoryName}
+                                onChange={e => setNewCategoryName(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') submitNewCategory(); if (e.key === 'Escape') { setAddingCategory(false); setNewCategoryName(''); } }}
+                                onBlur={submitNewCategory}
+                                placeholder="分类名称"
+                                className={`w-24 shrink-0 px-3 py-1.5 rounded-full text-xs border outline-none ${isDark ? 'bg-neutral-900 text-white border-neutral-600' : 'bg-white text-neutral-900 border-neutral-400'}`}
+                            />
+                        ) : (
                             <button
-                                key={cat}
-                                onClick={() => setSelectedCategory(cat)}
-                                className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${selectedCategory === cat
-                                    ? isDark ? 'bg-neutral-100 text-black border-white' : 'bg-neutral-900 text-white border-neutral-900'
-                                    : isDark ? 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:border-neutral-600' : 'bg-white text-neutral-600 border-neutral-200 hover:border-neutral-300'
-                                    }`}
+                                onClick={() => setAddingCategory(true)}
+                                className={`shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs border border-dashed transition-colors ${isDark ? 'text-neutral-500 border-neutral-700 hover:text-white hover:border-neutral-500' : 'text-neutral-400 border-neutral-300 hover:text-neutral-700 hover:border-neutral-400'}`}
+                                title="新建自定义分类"
                             >
-                                {cat}
+                                <Plus size={12} /> 分类
                             </button>
-                        ))}
+                        )}
                     </div>
                     <button
                         onClick={onImportClick}

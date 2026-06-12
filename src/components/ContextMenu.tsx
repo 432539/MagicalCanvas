@@ -17,7 +17,8 @@ import {
   Files,
   Layers,
   ChevronRight,
-  HardDrive
+  HardDrive,
+  Replace
 } from 'lucide-react';
 import { ContextMenuState, NodeType } from '../types';
 
@@ -32,6 +33,7 @@ interface ContextMenuProps {
   onCopy?: () => void;
   onDuplicate?: () => void;
   onCreateAsset?: () => void;
+  onReplaceAsset?: () => void;
   onAddAssets?: () => void;
   canUndo?: boolean;
   canRedo?: boolean;
@@ -49,6 +51,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   onCopy,
   onDuplicate,
   onCreateAsset,
+  onReplaceAsset,
   onAddAssets,
   canUndo = false,
   canRedo = false,
@@ -135,6 +138,18 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             onClick={() => {
               if (onCreateAsset) {
                 onCreateAsset();
+                onClose();
+              }
+            }}
+            active={false}
+            canvasTheme={canvasTheme}
+          />
+          <MenuItem
+            icon={<Replace size={16} />}
+            label="替换素材"
+            onClick={() => {
+              if (onReplaceAsset) {
+                onReplaceAsset();
                 onClose();
               }
             }}
