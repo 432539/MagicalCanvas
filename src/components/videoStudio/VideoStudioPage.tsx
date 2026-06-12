@@ -2388,7 +2388,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
             <div className="flex-1 flex min-h-0">
                 {/* --- 左：素材库（支持拖放文件导入） --- */}
                 <div
-                    className={`relative w-60 border-r flex flex-col flex-shrink-0 min-h-0 transition-colors ${libDragOver ? 'border-cyan-500' : 'border-neutral-800'}`}
+                    className={`relative flex-1 min-w-[240px] border-r flex flex-col min-h-0 transition-colors ${libDragOver ? 'border-cyan-500' : 'border-neutral-800'}`}
                     onDragOver={handleLibDragOver}
                     onDragLeave={handleLibDragLeave}
                     onDrop={handleLibDrop}
@@ -2470,10 +2470,10 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                             </button>
                         </div>
                     )}
-                    <div className="flex-1 min-h-0 overflow-y-auto p-2 flex flex-wrap gap-2 content-start">
-                        {libLoading && <div className="w-full flex justify-center py-6"><Loader2 className="animate-spin text-neutral-500" size={18} /></div>}
+                    <div className="flex-1 min-h-0 overflow-y-auto p-2 grid grid-cols-[repeat(auto-fill,minmax(110px,1fr))] gap-2 content-start">
+                        {libLoading && <div className="col-span-full flex justify-center py-6"><Loader2 className="animate-spin text-neutral-500" size={18} /></div>}
                         {!libLoading && filteredLibrary.length === 0 && (
-                            <div className="w-full text-center text-xs text-neutral-600 py-8">
+                            <div className="col-span-full text-center text-xs text-neutral-600 py-8">
                                 {library.length === 0 ? <>还没有素材<br />去画布生成、点上方「导入」<br />或直接把文件拖到这里</> : '该分类下没有素材'}
                             </div>
                         )}
@@ -2482,7 +2482,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                             return (
                             <div
                                 key={`${v.assetType}_${v.id}`}
-                                className={`group relative w-[calc(50%-4px)] flex-shrink-0 rounded-lg overflow-hidden bg-neutral-900 border cursor-pointer ${libSelectMode && checked ? 'border-cyan-500 ring-1 ring-cyan-500/60' : 'border-neutral-800 hover:border-cyan-600'}`}
+                                className={`group relative rounded-lg overflow-hidden bg-neutral-900 border cursor-pointer ${libSelectMode && checked ? 'border-cyan-500 ring-1 ring-cyan-500/60' : 'border-neutral-800 hover:border-cyan-600'}`}
                                 onClick={() => libSelectMode ? toggleLibSelect(v) : addClipFromLibrary(v)}
                                 draggable={!libSelectMode}
                                 onDragStart={e => {
@@ -2549,7 +2549,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                             <button
                                 onClick={handleAddAllToTimeline}
                                 disabled={addingAll}
-                                className="w-full mt-1 py-2 rounded-lg border border-dashed border-neutral-700 text-[11px] text-neutral-400 hover:text-cyan-300 hover:border-cyan-600 hover:bg-cyan-500/5 flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                                className="col-span-full mt-1 py-2 rounded-lg border border-dashed border-neutral-700 text-[11px] text-neutral-400 hover:text-cyan-300 hover:border-cyan-600 hover:bg-cyan-500/5 flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
                                 title="按列表顺序（镜头编号升序）把当前筛选的素材全部添加到时间轴"
                             >
                                 {addingAll ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
@@ -2559,8 +2559,16 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                     </div>
                 </div>
 
-                {/* --- 中：预览 --- */}
-                <div ref={previewColRef} className="flex-1 flex flex-col min-w-0 bg-[#0a0a0b]">
+                {/* --- 中：预览（宽度按项目画幅自适应，省下的空间给素材列表） --- */}
+                <div
+                    ref={previewColRef}
+                    className="flex flex-col flex-shrink-0 min-w-0 bg-[#0a0a0b]"
+                    style={{
+                        width: previewSize.h > 0
+                            ? `clamp(340px, ${Math.round(previewSize.h * (() => { const [rw, rh] = resolution.split('x').map(Number); return (rw / rh) || (16 / 9); })()) + 16}px, 58%)`
+                            : '50%',
+                    }}
+                >
                     <div
                         ref={previewAreaRef}
                         className="flex-1 flex items-center justify-center bg-black relative min-h-0 overflow-hidden"
@@ -2733,8 +2741,8 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                             </div>
                         )}
                     </div>
-                    {/* 播放控制条 */}
-                    <div className="h-12 flex items-center gap-3 px-4 border-t border-neutral-800 flex-shrink-0">
+                    {/* 播放控制条（预览列窄时自动折行，按钮不压扁） */}
+                    <div className="min-h-12 flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1 border-t border-neutral-800 flex-shrink-0 [&>*]:flex-shrink-0">
                         <button onClick={handlePlayPause} className="w-9 h-9 rounded-full bg-neutral-800 hover:bg-neutral-700 flex items-center justify-center" title={playing ? '暂停' : '播放'}>
                             {playing ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
                         </button>
