@@ -25,8 +25,8 @@ const VENV_PYTHON = process.platform === 'win32'
 // Inference script path
 const INFERENCE_SCRIPT = path.join(process.cwd(), 'scripts', 'inference.py');
 
-// Output directory for generated images
-const OUTPUT_DIR = path.join(process.cwd(), 'library', 'images');
+// Output directory for generated images（优先 LIBRARY_DIR：EXE 中指向用户数据目录）
+const OUTPUT_DIR = path.join(process.env.LIBRARY_DIR || path.join(process.cwd(), 'library'), 'images');
 
 // ============================================================================
 // HELPER FUNCTIONS

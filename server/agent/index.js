@@ -61,8 +61,11 @@ export async function generateTopicTitle(messages) {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const CHATS_DIR = path.join(__dirname, '..', '..', 'library', 'chats');
-const IMAGES_DIR = path.join(__dirname, '..', '..', 'library', 'images');
+// 必须使用 LIBRARY_DIR（EXE 里指向用户数据目录）：便携版每次启动解压到新的临时目录，
+// 按 __dirname 相对路径存聊天记录会导致重启后历史丢失
+const LIBRARY_DIR = process.env.LIBRARY_DIR || path.join(__dirname, '..', '..', 'library');
+const CHATS_DIR = path.join(LIBRARY_DIR, 'chats');
+const IMAGES_DIR = path.join(LIBRARY_DIR, 'images');
 
 // Ensure chats directory exists
 if (!fs.existsSync(CHATS_DIR)) {
