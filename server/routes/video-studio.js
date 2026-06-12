@@ -218,22 +218,76 @@ function stripTrailingPunct(s) {
     return t || String(s).trim(); // 全是标点的极端情况保留原文
 }
 
-/** 把识别文本切成适合做字幕的短句：先按句末标点切，过长的再按逗号细分，仍超长则按字数硬切 */
+/** 单字符视觉宽度：中日韩全角记 1，拉丁/数字等半角记 0.55（maxLen 以「中文字数」为单位） */
+function charW(ch) {
+    return /[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFF60\u3000-\u303F]/.test(ch) ? 1 : 0.55;
+}
+function visualLen(s) {
+    let n = 0;
+    for (const ch of String(s)) n += charW(ch);
+    return n;
+}
+
+/** 超长文本均衡硬切：按 ceil(总宽/上限) 份均分（10 字切成 5+5 而不是 9+1），拉丁文优先在空格处断 */
+function hardSplit(str, maxLen) {
+    let buf = String(str).trim();
+    const total = visualLen(buf);
+    if (total <= maxLen) return buf ? [buf] : [];
+    const n = Math.ceil(total / maxLen);
+    const target = total / n;
+    const out = [];
+    while (out.length < n - 1 && buf) {
+        let acc = 0;
+        let cut = buf.length;
+        for (let i = 0; i < buf.length; i++) {
+            acc += charW(buf[i]);
+            if (acc >= target) { cut = i + 1; break; }
+        }
+        // 含空格的文本（英文/西语等）把切点移到单词边界：先向后找（不超过 maxLen），再向前找
+        if (buf.includes(' ')) {
+            let fwd = -1;
+            let w = acc;
+            for (let j = cut; j < buf.length; j++) {
+                if (buf[j] === ' ') { fwd = j; break; }
+                w += charW(buf[j]);
+                if (w > maxLen) break;
+            }
+            if (fwd >= 0) {
+                cut = fwd;
+            } else {
+                const lastSpace = buf.slice(0, cut + 1).lastIndexOf(' ');
+                if (lastSpace > cut * 0.3) cut = lastSpace;
+            }
+        }
+        out.push(buf.slice(0, cut).trim());
+        buf = buf.slice(cut).trim();
+    }
+    if (buf) out.push(buf);
+    return out.filter(Boolean);
+}
+
+const PUNCT_ONLY = /^[\s\p{P}\p{S}]*$/u;
+
+/** 把识别文本切成适合做字幕的短句：先按句末标点切，过长的再按逗号细分，仍超长则均衡硬切 */
 function splitSubtitleText(text, maxLen = 22) {
     const sentences = String(text).split(/(?<=[。！？!?；;…])|\n+/).map(s => s.trim()).filter(Boolean);
     const pieces = [];
     for (const sent of sentences) {
-        if (sent.length <= maxLen) { pieces.push(sent); continue; }
+        // 长度按去掉句尾标点后计算（句尾标点最终不显示，不应导致多切一条）
+        if (visualLen(stripTrailingPunct(sent)) <= maxLen) { pieces.push(sent); continue; }
         const parts = sent.split(/(?<=[，,、：:])/).map(s => s.trim()).filter(Boolean);
         let buf = '';
         for (const part of parts) {
-            if (buf && (buf.length + part.length) > maxLen) { pieces.push(buf); buf = part; }
-            else buf += part;
+            if (buf && (visualLen(buf) + visualLen(stripTrailingPunct(part))) > maxLen) {
+                pieces.push(...hardSplit(stripTrailingPunct(buf), maxLen));
+                buf = part;
+            } else {
+                buf += (buf && !buf.endsWith(' ') && /^[a-zA-Z]/.test(part) ? ' ' : '') + part;
+            }
         }
-        while (buf.length > maxLen) { pieces.push(buf.slice(0, maxLen)); buf = buf.slice(maxLen); }
-        if (buf) pieces.push(buf);
+        if (buf) pieces.push(...hardSplit(stripTrailingPunct(buf), maxLen));
     }
-    return pieces.map(stripTrailingPunct);
+    return pieces.map(stripTrailingPunct).filter(p => !PUNCT_ONLY.test(p));
 }
 
 /** 用 ffmpeg silencedetect 找语音区间（秒，相对音频开头）；失败时退化为整段 */
@@ -257,6 +311,21 @@ async function detectSpeechIntervals(audioPath, totalDur) {
     }
     if (totalDur - cur >= 0.15) intervals.push([cur, totalDur]);
     return intervals.length > 0 ? intervals : [[0, totalDur]];
+}
+
+/** 合并过碎的语音区间：间隔很小或区间过短（说话中的换气/顿挫被误判为静音）时并入相邻区间 */
+function mergeShortIntervals(intervals, minDur = 0.5, maxGap = 0.35) {
+    if (!intervals || intervals.length <= 1) return intervals;
+    const out = [intervals[0].slice()];
+    for (let i = 1; i < intervals.length; i++) {
+        const prev = out[out.length - 1];
+        const [s, e] = intervals[i];
+        const gap = s - prev[1];
+        const tooShort = (e - s) < minDur || (prev[1] - prev[0]) < minDur;
+        if (gap <= maxGap || (tooShort && gap <= 0.8)) prev[1] = e;
+        else out.push([s, e]);
+    }
+    return out;
 }
 
 /** 把字幕条分配到语音区间：条数与区间数一致则一一对应，否则按字数比例在语音时间内分配（跳过静音） */
@@ -291,7 +360,9 @@ router.post('/transcribe', async (req, res) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tcasr-'));
     try {
         // segments: [{ url, inPoint, outPoint, start, speed }]（start 为时间轴起点秒）
-        const { segments, language } = req.body;
+        // maxLen: 单条字幕最大字数（前端按导出分辨率/字号计算，竖屏更短）
+        const { segments, language, maxLen: maxLenRaw } = req.body;
+        const maxLen = Math.max(6, Math.min(30, Number(maxLenRaw) || 16));
         if (!Array.isArray(segments) || segments.length === 0) {
             return res.status(400).json({ error: '没有可识别的音频/视频片段' });
         }
@@ -332,35 +403,76 @@ router.post('/transcribe', async (req, res) => {
             // MiMo ASR（小米 mimo-v2.5-asr）：chat/completions + input_audio，鉴权用 api-key 头
             const isMimoAsr = /mimo.*asr/i.test(model) || /xiaomimimo\.com/i.test(baseUrl);
             if (isMimoAsr) {
-                const b64 = fs.readFileSync(clipAudio).toString('base64');
-                if (b64.length > 10 * 1024 * 1024) {
-                    throw new Error('音频片段过长（Base64 超过 10MB），请缩短片段后重试');
-                }
-                const resp = await fetch(`${baseUrl}/chat/completions`, {
-                    method: 'POST',
-                    headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        model,
-                        messages: [{
-                            role: 'user',
-                            content: [{ type: 'input_audio', input_audio: { data: `data:audio/mpeg;base64,${b64}` } }],
-                        }],
-                        asr_options: { language: language || 'auto' },
-                    }),
-                });
-                const bodyText = await resp.text();
-                if (!resp.ok) {
-                    throw new Error(`语音识别失败 (${resp.status}): ${bodyText.slice(0, 200)}`);
-                }
-                let data;
-                try { data = JSON.parse(bodyText); } catch (_) { data = {}; }
-                const text = String(data?.choices?.[0]?.message?.content || '').trim();
-                if (text) {
-                    // MiMo 不返回时间戳：先把文本切成字幕长度的短句（句号/逗号/字数），
-                    // 再用 silencedetect 找到语音区间，把字幕对齐到实际说话的时间段（跳过静音）
-                    const pieces = splitSubtitleText(text);
-                    const intervals = await detectSpeechIntervals(clipAudio, srcDur);
-                    const timed = allocateBySpeech(pieces, intervals, srcDur);
+                const callMimo = async (audioPath) => {
+                    const b64 = fs.readFileSync(audioPath).toString('base64');
+                    if (b64.length > 10 * 1024 * 1024) {
+                        throw new Error('音频片段过长（Base64 超过 10MB），请缩短片段后重试');
+                    }
+                    const resp = await fetch(`${baseUrl}/chat/completions`, {
+                        method: 'POST',
+                        headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            model,
+                            messages: [{
+                                role: 'user',
+                                content: [{ type: 'input_audio', input_audio: { data: `data:audio/mpeg;base64,${b64}` } }],
+                            }],
+                            asr_options: { language: language || 'auto' },
+                        }),
+                    });
+                    const bodyText = await resp.text();
+                    if (!resp.ok) {
+                        throw new Error(`语音识别失败 (${resp.status}): ${bodyText.slice(0, 200)}`);
+                    }
+                    let data;
+                    try { data = JSON.parse(bodyText); } catch (_) { data = {}; }
+                    return String(data?.choices?.[0]?.message?.content || '').trim();
+                };
+
+                // MiMo 不返回时间戳 → 用 silencedetect 把音频按静音切成若干「语音区间」，
+                // 每个区间单独识别：字幕时间 = 该区间的真实起止时间，和声音严格对齐
+                const intervals = mergeShortIntervals(await detectSpeechIntervals(clipAudio, srcDur));
+                let segRecognized = false;
+                for (let k = 0; k < intervals.length; k++) {
+                    const [ivS, ivE] = intervals[k];
+                    let text = '';
+                    let chunkOk = false;
+                    // 区间过多时不再细分（>24 段说明是连续说话，silencedetect 切碎了），整段识别
+                    if (intervals.length > 1 && intervals.length <= 24) {
+                        const chunkAudio = path.join(tmpDir, `seg_${i}_iv${k}.mp3`);
+                        try {
+                            await runFfmpeg([
+                                '-y', '-ss', Math.max(0, ivS - 0.05).toFixed(3), '-to', Math.min(srcDur, ivE + 0.05).toFixed(3),
+                                '-i', clipAudio, '-ac', '1', '-ar', '16000', '-b:a', '48k', chunkAudio,
+                            ], { timeoutMs: 60000 });
+                            if (fs.existsSync(chunkAudio) && fs.statSync(chunkAudio).size > 500) {
+                                text = await callMimo(chunkAudio);
+                                chunkOk = true;
+                            }
+                        } catch (_) { /* 切块失败 → 退回整段识别 */ }
+                    }
+                    if (!chunkOk) {
+                        // 单区间或切块失败：整段识别一次，按字数比例分配到语音区间
+                        const whole = await callMimo(clipAudio);
+                        if (whole) {
+                            const pieces = splitSubtitleText(whole, maxLen);
+                            const timed = allocateBySpeech(pieces, intervals, srcDur);
+                            for (const t of timed) {
+                                out.push({
+                                    start: +toTimeline(t.start).toFixed(2),
+                                    end: +toTimeline(Math.max(t.end, t.start + 0.3)).toFixed(2),
+                                    text: t.text,
+                                });
+                            }
+                            if (pieces.length > 0) segRecognized = true;
+                        }
+                        break; // 整段已处理完，不再逐区间
+                    }
+                    // 只有标点/空白的识别结果（换气、杂音被识别成「。」等）直接丢弃
+                    if (!text || /^[\s\p{P}\p{S}]+$/u.test(text)) continue;
+                    // 该区间的文本：不超长直接用区间时间；超长再按字数比例在区间内细分
+                    const pieces = splitSubtitleText(text, maxLen);
+                    const timed = allocateBySpeech(pieces, [[ivS, ivE]], ivE - ivS);
                     for (const t of timed) {
                         out.push({
                             start: +toTimeline(t.start).toFixed(2),
@@ -368,8 +480,9 @@ router.post('/transcribe', async (req, res) => {
                             text: t.text,
                         });
                     }
-                    if (pieces.length > 0) recognizedAny = true;
+                    if (pieces.length > 0) segRecognized = true;
                 }
+                if (segRecognized) recognizedAny = true;
                 continue;
             }
 
@@ -728,18 +841,32 @@ router.post('/export', async (req, res) => {
         // 按最大宽度自动断行：CJK 字符宽≈字号、半角≈0.55 字号，逐字累计宽度插入换行
         const NO_LINE_HEAD = /[，。！？、：；…,.!?;:）)】」』”’%℃]/; // 标点禁则：这些字符不放行首
         const wrapByWidth = (text, maxPx, fontSize) => {
+            const chW = (c) => /[\u2E80-\u9FFF\uF900-\uFAFF\uFF01-\uFF60\u3000-\u303F]/.test(c) ? fontSize : fontSize * 0.55;
             const lines = [];
             for (const manual of String(text).split('\n')) {
                 let line = '';
                 let w = 0;
                 for (const ch of manual) {
-                    const cw = /[\u2E80-\u9FFF\uF900-\uFAFF\uFF01-\uFF60\u3000-\u303F]/.test(ch) ? fontSize : fontSize * 0.55;
-                    if (line && w + cw > maxPx && !NO_LINE_HEAD.test(ch)) { lines.push(line); line = ch; w = cw; }
-                    else { line += ch; w += cw; }
+                    const cw = chW(ch);
+                    if (line && w + cw > maxPx && !NO_LINE_HEAD.test(ch)) {
+                        // 拉丁文回退到最近空格断行，避免把单词切成两半
+                        const sp = line.lastIndexOf(' ');
+                        if (ch !== ' ' && sp > line.length * 0.4) {
+                            const carry = line.slice(sp + 1) + ch;
+                            lines.push(line.slice(0, sp));
+                            line = carry;
+                            w = 0;
+                            for (const c of line) w += chW(c);
+                        } else {
+                            lines.push(line.trimEnd());
+                            line = ch === ' ' ? '' : ch;
+                            w = ch === ' ' ? 0 : cw;
+                        }
+                    } else { line += ch; w += cw; }
                 }
                 lines.push(line);
             }
-            return lines.join('\n');
+            return lines.filter(l => l.trim()).join('\n');
         };
         const font = findSubtitleFont();
         let subIdx = 0;

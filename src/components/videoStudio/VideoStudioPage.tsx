@@ -1701,10 +1701,14 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         setTranscribing(true);
         setErrorMsg(null);
         try {
+            // 单条字幕最大字数：按导出分辨率、字号与最大宽度估算一行能放下的字数（竖屏自动更短）
+            const r = RESOLUTIONS.find(x => x.id === resolution) || RESOLUTIONS[0];
+            const fontPx = Math.max(12, (defaultStyle.fontScale || 0.052) * r.h);
+            const maxLen = Math.max(6, Math.min(24, Math.floor((r.w * (defaultStyle.maxW ?? 0.9)) / fontPx)));
             const res = await fetch('http://localhost:3501/api/video-studio/transcribe', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ segments }),
+                body: JSON.stringify({ segments, maxLen }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || '语音识别失败');
@@ -2094,7 +2098,9 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                             color: currentSub.style.color,
                                             textShadow: `0 0 3px ${currentSub.style.outlineColor}, 1.5px 1.5px 1.5px ${currentSub.style.outlineColor}, -1px -1px 1.5px ${currentSub.style.outlineColor}`,
                                             backgroundColor: currentSub.style.background ? currentSub.style.backgroundColor + 'd9' : 'transparent',
-                                            // 超出最大宽度自动换行（导出端按相同比例断行）；回车仍可手动换行
+                                            // width: max-content：绝对定位元素默认被容器右边界挤压收缩，
+                                            // 拖到偏右时会被压成一字一行；按内容定宽后再用 maxWidth 控制换行
+                                            width: 'max-content',
                                             maxWidth: Math.round((currentSub.style.maxW ?? 0.9) * videoBoxW),
                                             whiteSpace: 'pre-wrap',
                                             wordBreak: 'break-all',
