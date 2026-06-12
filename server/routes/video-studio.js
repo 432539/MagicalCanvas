@@ -212,6 +212,75 @@ router.post('/script', async (req, res) => {
 // 智能字幕：语音识别（OpenAI 兼容 /audio/transcriptions 接口）
 // ============================================================================
 
+/** 把识别文本切成适合做字幕的短句：先按句末标点切，过长的再按逗号细分，仍超长则按字数硬切 */
+function splitSubtitleText(text, maxLen = 22) {
+    const sentences = String(text).split(/(?<=[。！？!?；;…])|\n+/).map(s => s.trim()).filter(Boolean);
+    const pieces = [];
+    for (const sent of sentences) {
+        if (sent.length <= maxLen) { pieces.push(sent); continue; }
+        const parts = sent.split(/(?<=[，,、：:])/).map(s => s.trim()).filter(Boolean);
+        let buf = '';
+        for (const part of parts) {
+            if (buf && (buf.length + part.length) > maxLen) { pieces.push(buf); buf = part; }
+            else buf += part;
+        }
+        while (buf.length > maxLen) { pieces.push(buf.slice(0, maxLen)); buf = buf.slice(maxLen); }
+        if (buf) pieces.push(buf);
+    }
+    return pieces;
+}
+
+/** 用 ffmpeg silencedetect 找语音区间（秒，相对音频开头）；失败时退化为整段 */
+async function detectSpeechIntervals(audioPath, totalDur) {
+    let stderr = '';
+    try {
+        stderr = await runFfmpeg(['-i', audioPath, '-af', 'silencedetect=noise=-35dB:d=0.25', '-f', 'null', '-'], { timeoutMs: 60000 });
+    } catch (_) {
+        return [[0, totalDur]];
+    }
+    const starts = [...stderr.matchAll(/silence_start:\s*(-?[\d.]+)/g)].map(m => Math.max(0, +m[1]));
+    const ends = [...stderr.matchAll(/silence_end:\s*([\d.]+)/g)].map(m => +m[1]);
+    // 组装静音区间（结尾静音可能只有 start 没有 end）
+    const silences = starts.map((s, i) => [s, ends[i] !== undefined ? ends[i] : totalDur]);
+    // 取补集 = 语音区间，过滤掉极短的碎片
+    const intervals = [];
+    let cur = 0;
+    for (const [s, e] of silences) {
+        if (s - cur >= 0.15) intervals.push([cur, s]);
+        cur = Math.max(cur, e);
+    }
+    if (totalDur - cur >= 0.15) intervals.push([cur, totalDur]);
+    return intervals.length > 0 ? intervals : [[0, totalDur]];
+}
+
+/** 把字幕条分配到语音区间：条数与区间数一致则一一对应，否则按字数比例在语音时间内分配（跳过静音） */
+function allocateBySpeech(pieces, intervals, fallbackDur) {
+    if (!intervals || intervals.length === 0) intervals = [[0, fallbackDur]];
+    if (intervals.length === pieces.length) {
+        return pieces.map((p, i) => ({ text: p, start: intervals[i][0], end: intervals[i][1] }));
+    }
+    const speechTotal = intervals.reduce((n, [a, b]) => n + (b - a), 0) || fallbackDur;
+    const totalChars = pieces.reduce((n, p) => n + p.length, 0) || 1;
+    // 语音时间（去掉静音后的累计时长）→ 真实时间
+    const toReal = (st) => {
+        let acc = 0;
+        for (const [a, b] of intervals) {
+            const len = b - a;
+            if (st <= acc + len) return a + (st - acc);
+            acc += len;
+        }
+        return intervals[intervals.length - 1][1];
+    };
+    const out = [];
+    let cursor = 0;
+    for (const p of pieces) {
+        const d = speechTotal * (p.length / totalChars);
+        out.push({ text: p, start: toReal(cursor), end: toReal(cursor + d) });
+        cursor += d;
+    }
+    return out;
+}
+
 router.post('/transcribe', async (req, res) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tcasr-'));
     try {
@@ -281,20 +350,19 @@ router.post('/transcribe', async (req, res) => {
                 try { data = JSON.parse(bodyText); } catch (_) { data = {}; }
                 const text = String(data?.choices?.[0]?.message?.content || '').trim();
                 if (text) {
-                    // MiMo 不返回时间戳：按句切分，按字数比例在片段时长内分配时间
-                    const sentences = text.split(/(?<=[。！？!?；;])|\n+/).map(s => s.trim()).filter(Boolean);
-                    const totalChars = sentences.reduce((n, s) => n + s.length, 0) || 1;
-                    let cursor = 0;
-                    for (const s of sentences) {
-                        const dur = srcDur * (s.length / totalChars);
+                    // MiMo 不返回时间戳：先把文本切成字幕长度的短句（句号/逗号/字数），
+                    // 再用 silencedetect 找到语音区间，把字幕对齐到实际说话的时间段（跳过静音）
+                    const pieces = splitSubtitleText(text);
+                    const intervals = await detectSpeechIntervals(clipAudio, srcDur);
+                    const timed = allocateBySpeech(pieces, intervals, srcDur);
+                    for (const t of timed) {
                         out.push({
-                            start: +toTimeline(cursor).toFixed(2),
-                            end: +toTimeline(cursor + dur).toFixed(2),
-                            text: s,
+                            start: +toTimeline(t.start).toFixed(2),
+                            end: +toTimeline(Math.max(t.end, t.start + 0.3)).toFixed(2),
+                            text: t.text,
                         });
-                        cursor += dur;
                     }
-                    recognizedAny = true;
+                    if (pieces.length > 0) recognizedAny = true;
                 }
                 continue;
             }
