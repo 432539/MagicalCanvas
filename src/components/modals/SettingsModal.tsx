@@ -56,11 +56,11 @@ const GROUPS: GroupDef[] = [
     },
     {
         title: '语音识别（智能字幕）',
-        desc: '剪辑工作室「智能字幕」使用。接口需兼容 OpenAI Whisper（/audio/transcriptions）。留空时复用文字模型的网址和 KEY。',
+        desc: '剪辑工作室「智能字幕」使用。支持小米 MiMo ASR（mimo-v2.5-asr）和 OpenAI Whisper 兼容接口（/audio/transcriptions）。留空时复用文字模型的网址和 KEY。',
         fields: [
-            { key: 'ASR_API_URL', label: '网址 (Base URL)', placeholder: '留空则复用文字模型网址', hint: '需支持 /audio/transcriptions 的服务地址' },
+            { key: 'ASR_API_URL', label: '网址 (Base URL)', placeholder: 'https://api.xiaomimimo.com/v1', hint: 'MiMo 或支持 /audio/transcriptions 的服务地址' },
             { key: 'ASR_API_KEY', label: 'KEY (API Key)', hint: '留空则复用文字模型 KEY' },
-            { key: 'ASR_MODEL', label: '模型名', placeholder: 'whisper-1', hint: '例如 whisper-1 / gpt-4o-mini-transcribe' },
+            { key: 'ASR_MODEL', label: '模型名', placeholder: 'mimo-v2.5-asr', hint: '例如 mimo-v2.5-asr / whisper-1' },
         ],
     },
 ];

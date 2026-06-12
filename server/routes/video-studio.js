@@ -250,6 +250,56 @@ router.post('/transcribe', async (req, res) => {
             }
             if (!fs.existsSync(clipAudio) || fs.statSync(clipAudio).size < 1000) continue;
 
+            // 识别结果时间是相对截取后音频的，映射回时间轴：t = 片段时间轴起点 + 识别时间 / 倍速
+            const toTimeline = (srcT) => segStart + Math.max(0, Number(srcT) || 0) / speed;
+            const srcDur = outP - inP; // 截取音频时长（秒）
+
+            // MiMo ASR（小米 mimo-v2.5-asr）：chat/completions + input_audio，鉴权用 api-key 头
+            const isMimoAsr = /mimo.*asr/i.test(model) || /xiaomimimo\.com/i.test(baseUrl);
+            if (isMimoAsr) {
+                const b64 = fs.readFileSync(clipAudio).toString('base64');
+                if (b64.length > 10 * 1024 * 1024) {
+                    throw new Error('音频片段过长（Base64 超过 10MB），请缩短片段后重试');
+                }
+                const resp = await fetch(`${baseUrl}/chat/completions`, {
+                    method: 'POST',
+                    headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        model,
+                        messages: [{
+                            role: 'user',
+                            content: [{ type: 'input_audio', input_audio: { data: `data:audio/mpeg;base64,${b64}` } }],
+                        }],
+                        asr_options: { language: language || 'auto' },
+                    }),
+                });
+                const bodyText = await resp.text();
+                if (!resp.ok) {
+                    throw new Error(`语音识别失败 (${resp.status}): ${bodyText.slice(0, 200)}`);
+                }
+                let data;
+                try { data = JSON.parse(bodyText); } catch (_) { data = {}; }
+                const text = String(data?.choices?.[0]?.message?.content || '').trim();
+                if (text) {
+                    // MiMo 不返回时间戳：按句切分，按字数比例在片段时长内分配时间
+                    const sentences = text.split(/(?<=[。！？!?；;])|\n+/).map(s => s.trim()).filter(Boolean);
+                    const totalChars = sentences.reduce((n, s) => n + s.length, 0) || 1;
+                    let cursor = 0;
+                    for (const s of sentences) {
+                        const dur = srcDur * (s.length / totalChars);
+                        out.push({
+                            start: +toTimeline(cursor).toFixed(2),
+                            end: +toTimeline(cursor + dur).toFixed(2),
+                            text: s,
+                        });
+                        cursor += dur;
+                    }
+                    recognizedAny = true;
+                }
+                continue;
+            }
+
+            // OpenAI Whisper 兼容（/audio/transcriptions，multipart）
             const form = new FormData();
             form.append('file', new Blob([fs.readFileSync(clipAudio)], { type: 'audio/mpeg' }), `seg_${i}.mp3`);
             form.append('model', model);
@@ -271,8 +321,6 @@ router.post('/transcribe', async (req, res) => {
             let data;
             try { data = JSON.parse(bodyText); } catch (_) { data = { text: bodyText }; }
 
-            // 识别结果时间是相对截取后音频的，映射回时间轴：t = 片段时间轴起点 + 识别时间 / 倍速
-            const toTimeline = (srcT) => segStart + Math.max(0, Number(srcT) || 0) / speed;
             if (Array.isArray(data.segments) && data.segments.length > 0) {
                 for (const s of data.segments) {
                     const txt = String(s.text || '').trim();
@@ -283,7 +331,7 @@ router.post('/transcribe', async (req, res) => {
             } else if (data.text && String(data.text).trim()) {
                 out.push({
                     start: +toTimeline(0).toFixed(2),
-                    end: +toTimeline((outP - inP)).toFixed(2),
+                    end: +toTimeline(srcDur).toFixed(2),
                     text: String(data.text).trim(),
                 });
                 recognizedAny = true;
