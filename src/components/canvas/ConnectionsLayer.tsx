@@ -168,6 +168,24 @@ interface Connection {
     childId: string;
 }
 
+// 多套霓虹渐变配色：每条连线按节点 ID 稳定取一套，避免大量平行线颜色单一。
+// 4 个色标让渐变过渡更明显，色彩偏赛博霓虹。
+const NEON_PALETTES: [string, string, string, string][] = [
+    ['#00e5ff', '#2979ff', '#7c4dff', '#e040fb'], // 青 → 蓝 → 紫 → 品红
+    ['#b388ff', '#e040fb', '#ff4081', '#ff9e80'], // 紫 → 品红 → 粉 → 珊瑚
+    ['#00e676', '#1de9b6', '#00e5ff', '#448aff'], // 绿 → 青绿 → 青 → 蓝
+    ['#ffd740', '#ffab40', '#ff6e40', '#ff4081'], // 金 → 橙 → 橘红 → 粉
+    ['#18ffff', '#64ffda', '#69f0ae', '#b2ff59'], // 冰青 → 薄荷 → 翠绿 → 黄绿
+    ['#8c9eff', '#b388ff', '#ea80fc', '#ff80ab'], // 长春花 → 薰衣草 → 兰紫 → 樱粉
+];
+
+/** 字符串稳定哈希（连线两端 ID 决定配色与流速，刷新/拖动不变色） */
+const hashStr = (s: string): number => {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return Math.abs(h);
+};
+
 interface ConnectionsLayerProps {
     nodes: NodeData[];
     viewport: Viewport;
@@ -211,7 +229,11 @@ export const ConnectionsLayer: React.FC<ConnectionsLayerProps> = ({
             const isSelected = selectedConnection?.parentId === parentId && selectedConnection?.childId === node.id;
             const gradId = `conn-grad-${parent.id}-${node.id}`;
 
-            // 沿连线方向的渐变（青 → 紫 → 粉）
+            // 按连线两端 ID 稳定选一套霓虹配色 + 微调流速，相邻平行线颜色错开
+            const h = hashStr(`${parent.id}-${node.id}`);
+            const palette = NEON_PALETTES[h % NEON_PALETTES.length];
+            const flowDur = 0.8 + (h % 5) * 0.15; // 0.8s ~ 1.4s
+
             gradients.push(
                 <linearGradient
                     key={gradId}
@@ -219,9 +241,10 @@ export const ConnectionsLayer: React.FC<ConnectionsLayerProps> = ({
                     gradientUnits="userSpaceOnUse"
                     x1={startX} y1={startY} x2={endX} y2={endY}
                 >
-                    <stop offset="0%" stopColor="#06b6d4" />
-                    <stop offset="55%" stopColor="#8b5cf6" />
-                    <stop offset="100%" stopColor="#ec4899" />
+                    <stop offset="0%" stopColor={palette[0]} />
+                    <stop offset="38%" stopColor={palette[1]} />
+                    <stop offset="70%" stopColor={palette[2]} />
+                    <stop offset="100%" stopColor={palette[3]} />
                 </linearGradient>
             );
 
@@ -232,6 +255,16 @@ export const ConnectionsLayer: React.FC<ConnectionsLayerProps> = ({
                     className="cursor-pointer group pointer-events-auto"
                 >
                     <path d={path} stroke="transparent" strokeWidth="20" fill="none" />
+                    {/* 霓虹辉光（同渐变的粗低透明度描边，廉价 glow 不用滤镜） */}
+                    <path
+                        d={path}
+                        stroke={`url(#${gradId})`}
+                        strokeWidth={isSelected ? 11 : 8}
+                        strokeLinecap="round"
+                        fill="none"
+                        opacity={canvasTheme === 'dark' ? (isSelected ? 0.32 : 0.18) : (isSelected ? 0.22 : 0.12)}
+                        className="pointer-events-none transition-all group-hover:opacity-40"
+                    />
                     {/* 彩色渐变主线 */}
                     <path
                         d={path}
@@ -239,18 +272,18 @@ export const ConnectionsLayer: React.FC<ConnectionsLayerProps> = ({
                         strokeWidth={isSelected ? 3.5 : 2.5}
                         strokeLinecap="round"
                         fill="none"
-                        opacity={isSelected ? 1 : 0.9}
+                        opacity={isSelected ? 1 : 0.95}
                         className="transition-all group-hover:opacity-100"
                     />
-                    {/* 流动光点（虚线滚动动画） */}
+                    {/* 流动光点（虚线滚动动画，速度随连线微差更有层次） */}
                     <path
                         d={path}
-                        stroke={canvasTheme === 'dark' ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.95)'}
+                        stroke={canvasTheme === 'dark' ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.95)'}
                         strokeWidth={isSelected ? 2 : 1.6}
                         strokeLinecap="round"
                         strokeDasharray="3 17"
                         fill="none"
-                        style={{ animation: 'connFlow 1s linear infinite' }}
+                        style={{ animation: `connFlow ${flowDur}s linear infinite` }}
                         className="pointer-events-none"
                     />
                 </g>
