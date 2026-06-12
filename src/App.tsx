@@ -521,15 +521,68 @@ export default function App() {
       : scope === 'failed' ? n.status === NodeStatus.ERROR
         : true;
 
+  // 已生成、可存入素材库的节点（结果在本地 library 里）
+  const isSavableNode = (n: NodeData) =>
+    n.status === NodeStatus.SUCCESS && !!n.resultUrl && n.resultUrl.includes('/library/');
+
   const batchGenCounts = React.useMemo(() => {
     const imgs = nodes.filter(isImageGenNode);
     const vids = nodes.filter(isVideoGenNode);
     return {
       image: { idle: imgs.filter(n => matchScope(n, 'idle')).length, failed: imgs.filter(n => matchScope(n, 'failed')).length, all: imgs.length },
       video: { idle: vids.filter(n => matchScope(n, 'idle')).length, failed: vids.filter(n => matchScope(n, 'failed')).length, all: vids.length },
+      savable: {
+        image: nodes.filter(n => n.type === NodeType.IMAGE && isSavableNode(n)).length,
+        video: nodes.filter(n => n.type === NodeType.VIDEO && isSavableNode(n)).length,
+      },
     };
   }, [nodes]);
   const failedNodeCount = batchGenCounts.image.failed + batchGenCounts.video.failed;
+
+  // 批量存素材：把画布上所有已生成的图片/视频复制进素材库
+  const [batchSaving, setBatchSaving] = useState<'image' | 'video' | null>(null);
+  const handleBatchSaveAssets = React.useCallback(async (kind: 'image' | 'video') => {
+    const targets = nodes.filter(n => n.type === (kind === 'image' ? NodeType.IMAGE : NodeType.VIDEO) && isSavableNode(n));
+    if (targets.length === 0 || batchSaving) return;
+    setBatchSaving(kind);
+    try {
+      // 选一个存在的分类：优先 Others，没有则用最后一个
+      let category = 'Others';
+      try {
+        const data = await fetch('/api/library/categories').then(r => r.json());
+        const list: string[] = Array.isArray(data.categories) ? data.categories : [];
+        if (list.length > 0 && !list.includes('Others')) category = list[list.length - 1];
+      } catch { /* 用默认 Others */ }
+
+      let ok = 0, fail = 0;
+      for (let i = 0; i < targets.length; i++) {
+        const n = targets[i];
+        const name = n.title || `${kind === 'image' ? '图片' : '视频'} ${i + 1}`;
+        try {
+          const res = await fetch('/api/library', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sourceUrl: n.resultUrl,
+              name,
+              category,
+              meta: { prompt: n.prompt || '' },
+            }),
+          });
+          if (res.ok) ok++; else fail++;
+        } catch { fail++; }
+      }
+      setIsBatchGenOpen(false);
+      showAppAlert(
+        fail === 0
+          ? `已存入素材库 ${ok} 个${kind === 'image' ? '图片' : '视频'}（分类：${category}）`
+          : `存入 ${ok} 个，失败 ${fail} 个（分类：${category}）`,
+        { title: '批量存素材' }
+      );
+    } finally {
+      setBatchSaving(null);
+    }
+  }, [nodes, batchSaving]);
 
   const handleBatchGenerate = React.useCallback((kind: 'image' | 'video', scope: 'idle' | 'failed' | 'all') => {
     const targets = nodes.filter(n => (kind === 'image' ? isImageGenNode(n) : isVideoGenNode(n)) && matchScope(n, scope));
@@ -1685,8 +1738,25 @@ export default function App() {
                       ))}
                     </div>
                   ))}
+                  <div className={`flex items-center gap-2 py-1.5 mt-1 pt-2.5 border-t ${canvasTheme === 'dark' ? 'border-neutral-800' : 'border-neutral-100'}`}>
+                    <span className={`text-xs font-medium w-8 shrink-0 ${canvasTheme === 'dark' ? 'text-neutral-300' : 'text-neutral-700'}`}>存素材</span>
+                    {([
+                      { kind: 'image' as const, text: '图片', count: batchGenCounts.savable.image },
+                      { kind: 'video' as const, text: '视频', count: batchGenCounts.savable.video },
+                    ]).map(({ kind, text, count }) => (
+                      <button
+                        key={kind}
+                        onClick={() => handleBatchSaveAssets(kind)}
+                        disabled={count === 0 || !!batchSaving}
+                        className="flex-1 px-2 py-1.5 text-[11px] rounded-lg border transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10"
+                        title={`把画布上 ${count} 个已生成的${text}存入素材库`}
+                      >
+                        {batchSaving === kind ? '存入中…' : `${text} ${count}`}
+                      </button>
+                    ))}
+                  </div>
                   <div className={`mt-1.5 pt-1.5 border-t text-[10px] ${canvasTheme === 'dark' ? 'border-neutral-800 text-neutral-600' : 'border-neutral-100 text-neutral-400'}`}>
-                    最多 3 个并发，按队列依次生成；「全部」会重新生成已有内容
+                    最多 3 个并发，按队列依次生成；「全部」会重新生成已有内容；「存素材」把已生成内容批量存入素材库
                   </div>
                 </div>
               </>

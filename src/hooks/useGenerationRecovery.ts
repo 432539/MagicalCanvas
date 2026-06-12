@@ -62,6 +62,20 @@ export const useGenerationRecovery = ({
                     }
 
                     updateNode(nodeId, updates);
+                } else if (data.status === 'stale') {
+                    // 服务器没有结果文件、也没有进行中的任务 → 生成在应用关闭/重启时中断了。
+                    // 用 generationStartTime 防误判：刚发起的生成（图片转 base64 等准备阶段）
+                    // 请求可能还没到服务器，60 秒内不判定中断。
+                    const node = nodesRef.current.find(n => n.id === nodeId);
+                    const startedAt = node?.generationStartTime;
+                    if (!startedAt || Date.now() - startedAt > 60000) {
+                        console.log(`[Recovery] Node ${nodeId} generation was interrupted (app restart)`);
+                        updateNode(nodeId, {
+                            status: NodeStatus.ERROR,
+                            errorMessage: '生成已中断（应用关闭/重启），请点击重试或使用批量生成',
+                            generationStartTime: undefined,
+                        });
+                    }
                 }
             }
         } catch (error) {

@@ -17,11 +17,17 @@ import { generateGpt2apiImage, generateGpt2apiVideo, isGpt2apiImageModel, isGpt2
 
 const router = express.Router();
 
+// 正在进行的生成任务（nodeId 集合，进程内存）。用于让状态接口区分
+// 「还在生成中」和「应用重启后任务已中断」——后者前端可以直接标记失败让用户重试。
+const activeGenerations = new Set();
+
 // ============================================================================
 // IMAGE GENERATION
 // ============================================================================
 
 router.post('/generate-image', async (req, res) => {
+    const reqNodeId = req.body?.nodeId;
+    if (reqNodeId) activeGenerations.add(reqNodeId);
     try {
         const { nodeId, prompt, title, aspectRatio, resolution, imageBase64: rawImageBase64, imageModel, klingReferenceMode, klingFaceIntensity, klingSubjectIntensity } = req.body;
         const { IMAGE_API_URL, IMAGE_API_KEY, IMAGE_MODEL, IMAGES_DIR } = req.app.locals;
@@ -205,6 +211,8 @@ router.post('/generate-image', async (req, res) => {
     } catch (error) {
         console.error("Server Image Gen Error:", error);
         res.status(500).json({ error: error.message || "Image generation failed" });
+    } finally {
+        if (reqNodeId) activeGenerations.delete(reqNodeId);
     }
 });
 
@@ -213,6 +221,8 @@ router.post('/generate-image', async (req, res) => {
 // ============================================================================
 
 router.post('/generate-video', async (req, res) => {
+    const reqNodeId = req.body?.nodeId;
+    if (reqNodeId) activeGenerations.add(reqNodeId);
     try {
         const { nodeId, prompt, title, imageBase64: rawImageBase64, lastFrameBase64: rawLastFrameBase64, motionReferenceUrl: rawMotionReferenceUrl, aspectRatio, resolution, duration, videoModel } = req.body;
         const { VIDEO_API_URL, VIDEO_API_KEY, VIDEO_MODEL, VIDEOS_DIR } = req.app.locals;
@@ -408,6 +418,8 @@ router.post('/generate-video', async (req, res) => {
     } catch (error) {
         console.error("Server Video Gen Error:", error);
         res.status(500).json({ error: error.message || "Video generation failed" });
+    } finally {
+        if (reqNodeId) activeGenerations.delete(reqNodeId);
     }
 });
 
@@ -438,7 +450,11 @@ router.get('/generation-status/:nodeId', async (req, res) => {
             return res.json({ status: 'success', resultUrl: `/library/videos/${meta.filename}`, type: 'video', createdAt: meta.createdAt });
         }
 
-        res.json({ status: 'pending' });
+        // 没有结果文件：区分「本进程还在生成」和「应用重启后任务已中断」
+        if (activeGenerations.has(nodeId)) {
+            return res.json({ status: 'pending' });
+        }
+        res.json({ status: 'stale' });
     } catch (error) {
         console.error("Status Check Error:", error);
         res.status(500).json({ error: error.message });
