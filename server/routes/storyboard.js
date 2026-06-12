@@ -2,11 +2,12 @@
  * storyboard.js
  * 
  * Routes for AI storyboard script generation.
- * Uses Gemini 2.0 Flash for generating scene descriptions from user story input.
+ * 使用「设置」中配置的文字模型（OpenAI 兼容接口）生成分镜脚本，图片模型生成合成分镜图。
  */
 
 import express from 'express';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { gpt2apiChat, generateGpt2apiImage } from '../services/gpt2api.js';
+import { getKey } from '../config.js';
 
 const router = express.Router();
 
@@ -31,6 +32,55 @@ async function retryOperation(operation, maxRetries = 3, initialDelayMs = 2000) 
     }
 }
 
+/** 读取「设置」里的文字模型配置 */
+function getTextConfig() {
+    const apiKey = getKey('TEXT_API_KEY');
+    if (!apiKey) throw new Error('未配置文字模型 KEY，请在「设置 → 文字模型」中填写');
+    return {
+        baseUrl: getKey('TEXT_API_URL'),
+        apiKey,
+        model: getKey('TEXT_MODEL') || 'grok-4.20-fast',
+    };
+}
+
+/**
+ * 把 Gemini 风格的 promptParts（字符串 / {text} / {inlineData}）转成 OpenAI 多模态消息
+ */
+function partsToMessages(parts) {
+    const content = [];
+    for (const p of parts) {
+        if (typeof p === 'string') content.push({ type: 'text', text: p });
+        else if (p?.text) content.push({ type: 'text', text: p.text });
+        else if (p?.inlineData) {
+            content.push({
+                type: 'image_url',
+                image_url: { url: `data:${p.inlineData.mimeType || 'image/png'};base64,${p.inlineData.data}` },
+            });
+        }
+    }
+    return [{ role: 'user', content }];
+}
+
+/**
+ * 调用文字模型；带参考图失败时自动降级为纯文本重试（部分模型不支持图片输入）
+ */
+async function chatWithImages(parts) {
+    const cfg = getTextConfig();
+    const messages = partsToMessages(parts);
+    const hasImages = messages[0].content.some(c => c.type === 'image_url');
+    try {
+        return await retryOperation(() => gpt2apiChat({ messages, ...cfg }), 2, 1500);
+    } catch (e) {
+        if (!hasImages) throw e;
+        console.warn('[Storyboard] 带图请求失败，降级为纯文本重试:', e.message);
+        const textOnly = [{
+            role: 'user',
+            content: messages[0].content.filter(c => c.type === 'text').map(c => c.text).join('\n\n'),
+        }];
+        return await retryOperation(() => gpt2apiChat({ messages: textOnly, ...cfg }), 2, 1500);
+    }
+}
+
 // ============================================================================
 // SCRIPT GENERATION
 // ============================================================================
@@ -45,14 +95,7 @@ async function retryOperation(operation, maxRetries = 3, initialDelayMs = 2000) 
 router.post('/generate-scripts', async (req, res) => {
     try {
         const { story, characterDescriptions, sceneCount, referenceImages, characterImages } = req.body;
-        const { GEMINI_API_KEY } = req.app.locals;
         const { resolveImageToBase64 } = await import('../utils/imageHelpers.js');
-
-        if (!GEMINI_API_KEY) {
-            return res.status(500).json({
-                error: "Gemini API key not configured. Add GEMINI_API_KEY to .env"
-            });
-        }
 
         if (!story || !sceneCount) {
             return res.status(400).json({
@@ -69,10 +112,6 @@ router.post('/generate-scripts', async (req, res) => {
         }
 
         console.log(`[Storyboard] Generating ${count} scene scripts`);
-
-        // Initialize Gemini
-        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
         // Categorize reference images
         const refs = referenceImages || [];
@@ -253,9 +292,8 @@ Respond ONLY with valid JSON, no other text.`;
             }
         }
 
-        // Call Gemini with RETRY logic
-        const result = await retryOperation(() => model.generateContent(promptParts));
-        const responseText = result.response.text();
+        // 调用配置的文字模型（带参考图，失败自动降级纯文本）
+        const responseText = await chatWithImages(promptParts);
 
         // Parse JSON from response
         let parsed;
@@ -270,7 +308,7 @@ Respond ONLY with valid JSON, no other text.`;
 
             parsed = JSON.parse(jsonStr);
         } catch (parseError) {
-            console.error('[Storyboard] Failed to parse Gemini response:', parseError);
+            console.error('[Storyboard] Failed to parse AI response:', parseError);
             console.error('[Storyboard] Raw response:', responseText);
             return res.status(500).json({
                 error: "Failed to parse AI response. Please try again."
@@ -316,20 +354,9 @@ Respond ONLY with valid JSON, no other text.`;
 router.post('/brainstorm-story', async (req, res) => {
     try {
         const { characterDescriptions, genre, referenceImages, characterImages } = req.body;
-        const { GEMINI_API_KEY } = req.app.locals;
         const { resolveImageToBase64 } = await import('../utils/imageHelpers.js');
 
-        if (!GEMINI_API_KEY) {
-            return res.status(500).json({
-                error: "Gemini API key not configured. Add GEMINI_API_KEY to .env"
-            });
-        }
-
         console.log(`[Storyboard] Brainstorming story with ${characterDescriptions?.length || 0} characters`);
-
-        // Initialize Gemini
-        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
         // Build character context
         const characterContext = characterDescriptions && characterDescriptions.length > 0
@@ -400,9 +427,8 @@ Respond with ONLY the story synopsis, no additional text or formatting.`;
             }
         }
 
-        // Call Gemini with RETRY
-        const result = await retryOperation(() => model.generateContent(promptParts));
-        const story = result.response.text().trim();
+        // 调用配置的文字模型（带参考图，失败自动降级纯文本）
+        const story = (await chatWithImages(promptParts)).trim();
 
         console.log(`[Storyboard] Generated story: ${story.substring(0, 100)}...`);
 
@@ -428,13 +454,6 @@ Respond with ONLY the story synopsis, no additional text or formatting.`;
 router.post('/optimize-story', async (req, res) => {
     try {
         const { story, characterNames } = req.body;
-        const { GEMINI_API_KEY } = req.app.locals;
-
-        if (!GEMINI_API_KEY) {
-            return res.status(500).json({
-                error: "Gemini API key not configured. Add GEMINI_API_KEY to .env"
-            });
-        }
 
         if (!story || typeof story !== 'string') {
             return res.status(400).json({
@@ -443,10 +462,6 @@ router.post('/optimize-story', async (req, res) => {
         }
 
         console.log(`[Storyboard] Optimizing story length: ${story.length} chars`);
-
-        // Initialize Gemini
-        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
         const systemPrompt = `You are an expert storyboard artist and writer.
         
@@ -465,8 +480,7 @@ INSTRUCTIONS:
 
 Respond with ONLY the optimized story text.`;
 
-        const result = await retryOperation(() => model.generateContent(systemPrompt));
-        const optimizedStory = result.response.text().trim();
+        const optimizedStory = (await chatWithImages([systemPrompt])).trim();
 
         console.log(`[Storyboard] Optimized story: ${optimizedStory.substring(0, 50)}...`);
 
@@ -492,14 +506,7 @@ Respond with ONLY the optimized story text.`;
 router.post('/generate-composite', async (req, res) => {
     try {
         const { scripts, styleAnchor, characterDNA, sceneCount, referenceImages, characterImages } = req.body;
-        const { GEMINI_API_KEY } = req.app.locals;
         const { resolveImageToBase64 } = await import('../utils/imageHelpers.js');
-
-        if (!GEMINI_API_KEY) {
-            return res.status(500).json({
-                error: "Gemini API key not configured. Add GEMINI_API_KEY to .env"
-            });
-        }
 
         if (!scripts || scripts.length === 0) {
             return res.status(400).json({
@@ -728,53 +735,39 @@ CRITICAL:
 3. LABELING: ADD A VISIBLE, HIGH-CONTRAST WHITE NUMBER (1, ${count > 1 ? '2, ' : ''}...) in the corner of each panel.`;
 
         console.log(`[Storyboard] Composite prompt preview: ${compositePrompt.substring(0, 100)}...`);
-        console.log(`[Storyboard] Sending request to Gemini... Parts: ${promptParts.length + 1}`);
 
-        promptParts.push({ text: compositePrompt });
+        // 用「设置」中配置的图片模型生成合成分镜图（参考图作为图生图输入）
+        const imageApiKey = getKey('IMAGE_API_KEY');
+        if (!imageApiKey) {
+            return res.status(500).json({ error: '未配置图片模型 KEY，请在「设置 → 图片模型」中填写' });
+        }
+        // 把参考图标签拼进提示词，参考图本体作为图生图输入
+        const refLabels = promptParts.filter(p => p.text).map(p => p.text);
+        const refImages = promptParts
+            .filter(p => p.inlineData)
+            .map(p => `data:${p.inlineData.mimeType || 'image/png'};base64,${p.inlineData.data}`);
+        const fullPrompt = [...refLabels, compositePrompt].join('\n\n');
 
-        // Initialize Gemini for image generation
-        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-3-pro-image-preview',
-            generationConfig: {
-                // Adjusting timeout by NOT setting it (default is usually reasonable, but 503 suggests server-side limit)
-                responseModalities: ['Text', 'Image']
-            }
-        });
-
-        // Generate the composite image with RETRY
+        console.log(`[Storyboard] Sending composite request to image model... refs: ${refImages.length}`);
         const startTime = Date.now();
-        const result = await retryOperation(() => model.generateContent(promptParts));
-        const duration = Date.now() - startTime;
-        console.log(`[Storyboard] Gemini response received in ${duration}ms`);
+        const { buffer: imageBuffer, format } = await retryOperation(() => generateGpt2apiImage({
+            prompt: fullPrompt,
+            imageBase64Array: refImages,
+            aspectRatio: '16:9',
+            resolution: '2K',
+            model: getKey('IMAGE_MODEL') || 'nano-banana-pro',
+            baseUrl: getKey('IMAGE_API_URL'),
+            apiKey: imageApiKey,
+        }), 2, 2000);
+        console.log(`[Storyboard] Composite image generated in ${Date.now() - startTime}ms`);
 
-        const response = result.response;
-
-        // Extract image from response
-        let imageUrl = null;
-        for (const part of response.candidates[0].content.parts) {
-            if (part.inlineData) {
-                // Save the image
-                const imageBuffer = Buffer.from(part.inlineData.data, 'base64');
-                const timestamp = Date.now();
-                const fileName = `storyboard_composite_${timestamp}.png`;
-                const fs = await import('fs/promises');
-                const path = await import('path');
-                const assetsDir = req.app.locals.IMAGES_DIR || './library/images';
-                const filePath = path.join(assetsDir, fileName);
-
-                await fs.writeFile(filePath, imageBuffer);
-                imageUrl = `/library/images/${fileName}`;
-                console.log(`[Storyboard] Composite image saved: ${imageUrl}`);
-                break;
-            }
-        }
-
-        if (!imageUrl) {
-            return res.status(500).json({
-                error: "Failed to generate composite image. Please try again."
-            });
-        }
+        const fileName = `storyboard_composite_${Date.now()}.${format || 'png'}`;
+        const fsp = await import('fs/promises');
+        const pathMod = await import('path');
+        const assetsDir = req.app.locals.IMAGES_DIR || './library/images';
+        await fsp.writeFile(pathMod.join(assetsDir, fileName), imageBuffer);
+        const imageUrl = `/library/images/${fileName}`;
+        console.log(`[Storyboard] Composite image saved: ${imageUrl}`);
 
         return res.json({ imageUrl });
 
