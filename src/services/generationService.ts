@@ -18,6 +18,7 @@ export interface GenerateImageParams {
   klingReferenceMode?: 'subject' | 'face';
   klingFaceIntensity?: number; // 0-100
   klingSubjectIntensity?: number; // 0-100
+  title?: string; // 节点标题（如「分镜 01」），存入素材元数据供剪辑页区分
 }
 
 export interface GenerateVideoParams {
@@ -31,6 +32,7 @@ export interface GenerateVideoParams {
   motionReferenceUrl?: string; // For Kling 2.6 motion control
   generateAudio?: boolean; // For Kling 2.6 and Veo 3.1 native audio (default: true)
   nodeId?: string; // ID of the node initiating generation
+  title?: string; // 节点标题（如「镜头 01 视频」），存入素材元数据供剪辑页区分
 }
 
 /**

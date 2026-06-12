@@ -23,7 +23,7 @@ const router = express.Router();
 
 router.post('/generate-image', async (req, res) => {
     try {
-        const { nodeId, prompt, aspectRatio, resolution, imageBase64: rawImageBase64, imageModel, klingReferenceMode, klingFaceIntensity, klingSubjectIntensity } = req.body;
+        const { nodeId, prompt, title, aspectRatio, resolution, imageBase64: rawImageBase64, imageModel, klingReferenceMode, klingFaceIntensity, klingSubjectIntensity } = req.body;
         const { IMAGE_API_URL, IMAGE_API_KEY, IMAGE_MODEL, IMAGES_DIR } = req.app.locals;
 
         // 始终使用「设置」里的图片模型配置（OpenAI 兼容下游）
@@ -192,6 +192,7 @@ router.post('/generate-image', async (req, res) => {
             id: metadataId,  // Must match the filename for delete API to find it
             filename: saved.filename,
             prompt: prompt,
+            title: title || '',  // 节点标题（如「分镜 01」），剪辑页素材列表用于区分镜头
             model: imageModel || 'gemini-pro',
             createdAt: new Date().toISOString(),
             type: 'images'
@@ -213,7 +214,7 @@ router.post('/generate-image', async (req, res) => {
 
 router.post('/generate-video', async (req, res) => {
     try {
-        const { nodeId, prompt, imageBase64: rawImageBase64, lastFrameBase64: rawLastFrameBase64, motionReferenceUrl: rawMotionReferenceUrl, aspectRatio, resolution, duration, videoModel } = req.body;
+        const { nodeId, prompt, title, imageBase64: rawImageBase64, lastFrameBase64: rawLastFrameBase64, motionReferenceUrl: rawMotionReferenceUrl, aspectRatio, resolution, duration, videoModel } = req.body;
         const { VIDEO_API_URL, VIDEO_API_KEY, VIDEO_MODEL, VIDEOS_DIR } = req.app.locals;
 
         // Resolve file URLs to base64
@@ -392,6 +393,7 @@ router.post('/generate-video', async (req, res) => {
             id: metadataId,  // Must match the filename for delete API to find it
             filename: saved.filename,
             prompt: prompt,
+            title: title || '',  // 节点标题（如「镜头 01 视频」），剪辑页素材列表用于区分镜头
             model: videoModel || 'veo-3.1',
             aspectRatio: aspectRatio || 'Auto',
             resolution: resolution || 'Auto',

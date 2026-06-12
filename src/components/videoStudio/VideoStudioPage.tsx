@@ -25,6 +25,7 @@ interface LibraryAsset {
     id: string;
     url: string;
     prompt?: string;
+    title?: string;     // 来源节点标题（如「镜头 01 视频」），用于区分镜头
     createdAt?: string;
     assetType: 'video' | 'image';
 }
@@ -360,10 +361,16 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
     const [libSelected, setLibSelected] = useState<Set<string>>(new Set()); // 已勾选素材（assetType_id）
     const [libDeleting, setLibDeleting] = useState(false);               // 批量删除中
     const [libFilter, setLibFilter] = useState<'all' | 'video' | 'image'>('all'); // 素材类型筛选
-    const filteredLibrary = useMemo(
-        () => libFilter === 'all' ? library : library.filter(v => v.assetType === libFilter),
-        [library, libFilter]
-    );
+    /** 从标题中提取镜头/分镜编号（如「镜头 03 视频」「分镜 07」→ 3 / 7），无编号返回 Infinity */
+    const shotNo = (v: LibraryAsset): number => {
+        const m = (v.title || '').match(/(?:镜头|分镜)\s*(\d+)/);
+        return m ? parseInt(m[1], 10) : Infinity;
+    };
+    const filteredLibrary = useMemo(() => {
+        const list = libFilter === 'all' ? [...library] : library.filter(v => v.assetType === libFilter);
+        // 有镜头编号的按编号升序排前面，方便按顺序拖入时间轴；其余保持原顺序（按创建时间倒序）
+        return list.sort((a, b) => shotNo(a) - shotNo(b));
+    }, [library, libFilter]);
 
     // ---- 时间轴数据 ----
     const [clips, setClips] = useState<Clip[]>([]);
@@ -797,7 +804,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
     const buildClip = (v: LibraryAsset, sourceDuration: number, outPoint: number, isImage: boolean): Clip => ({
         id: uid(),
         url: v.url,
-        name: (v.prompt || (isImage ? '图片' : '视频片段')).slice(0, 20),
+        name: (v.title || v.prompt || (isImage ? '图片' : '视频片段')).slice(0, 20),
         sourceDuration,
         inPoint: 0,
         outPoint,
@@ -1970,6 +1977,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                 key={`${v.assetType}_${v.id}`}
                                 className={`group relative w-[calc(50%-4px)] flex-shrink-0 rounded-lg overflow-hidden bg-neutral-900 border cursor-pointer ${libSelectMode && checked ? 'border-cyan-500 ring-1 ring-cyan-500/60' : 'border-neutral-800 hover:border-cyan-600'}`}
                                 onClick={() => libSelectMode ? toggleLibSelect(v) : addClipFromLibrary(v)}
+                                title={[v.title, v.prompt].filter(Boolean).join('\n')}
                             >
                                 {v.assetType === 'image' ? (
                                     <img
@@ -2007,7 +2015,13 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                         <Trash2 size={11} />
                                     </button>
                                 )}
-                                <div className="px-1.5 py-1 text-[10px] text-neutral-400 truncate">{v.prompt || '视频'}</div>
+                                <div className="px-1.5 py-1 text-[10px] truncate">
+                                    {v.title ? (
+                                        <span className="text-cyan-300 font-medium">{v.title}</span>
+                                    ) : (
+                                        <span className="text-neutral-400">{v.prompt || '视频'}</span>
+                                    )}
+                                </div>
                             </div>
                             );
                         })}

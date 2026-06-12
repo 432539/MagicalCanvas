@@ -155,6 +155,7 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
                     imageBase64: imageBase64s.length > 0 ? imageBase64s : undefined,
                     imageModel: node.imageModel,
                     nodeId: id,
+                    title: node.title || '',
                     // Kling V1.5 reference settings
                     klingReferenceMode: node.klingReferenceMode,
                     klingFaceIntensity: node.klingFaceIntensity,
@@ -324,7 +325,8 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
                     videoModel: node.videoModel,
                     motionReferenceUrl,
                     generateAudio: node.generateAudio, // For Kling 2.6 and Veo 3.1 native audio
-                    nodeId: id
+                    nodeId: id,
+                    title: node.title || ''
                 });
 
                 // Add cache-busting parameter to force browser to fetch new video
