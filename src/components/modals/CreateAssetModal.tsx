@@ -38,7 +38,7 @@ export const CreateAssetModal: React.FC<CreateAssetModalProps> = ({
             setName('我的素材');
             setCategory(CATEGORIES[0]);
             setNewCatName('');
-            fetch('http://localhost:3501/api/library/categories')
+            fetch('/api/library/categories')
                 .then(r => r.ok ? r.json() : null)
                 .then(data => {
                     if (data && Array.isArray(data.categories) && data.categories.length > 0) {
@@ -54,7 +54,7 @@ export const CreateAssetModal: React.FC<CreateAssetModalProps> = ({
         const n = newCatName.trim();
         if (!n) return;
         try {
-            const res = await fetch('http://localhost:3501/api/library/categories', {
+            const res = await fetch('/api/library/categories', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: n }),

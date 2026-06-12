@@ -59,7 +59,7 @@ export const useWorkflow = ({
                 viewport
             };
 
-            const response = await fetch('http://localhost:3501/api/workflows', {
+            const response = await fetch('/api/workflows', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(workflow)
@@ -86,8 +86,8 @@ export const useWorkflow = ({
             const isPublic = id.startsWith('public:');
             const workflowId = isPublic ? id.replace('public:', '') : id;
             const endpoint = isPublic
-                ? `http://localhost:3501/api/public-workflows/${workflowId}`
-                : `http://localhost:3501/api/workflows/${workflowId}`;
+                ? `/api/public-workflows/${workflowId}`
+                : `/api/workflows/${workflowId}`;
 
             const response = await fetch(endpoint);
             if (response.ok) {

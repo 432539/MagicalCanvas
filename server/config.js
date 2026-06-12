@@ -37,6 +37,8 @@ export const SETTINGS_KEYS = [
     'ASR_API_URL',
     'ASR_API_KEY',
     'ASR_MODEL',
+    // 生成并发数（批量生成/一键创作时同时进行的生成任务数）
+    'GEN_CONCURRENCY',
 ];
 
 // 默认值（当配置文件与环境变量都未设置时使用）
@@ -48,6 +50,7 @@ export const DEFAULTS = {
     VIDEO_API_URL: 'https://www.gpt2api.com/v1',
     VIDEO_MODEL: 'veo3.1-lite',
     ASR_MODEL: 'whisper-1',
+    GEN_CONCURRENCY: '3',
 };
 
 /**

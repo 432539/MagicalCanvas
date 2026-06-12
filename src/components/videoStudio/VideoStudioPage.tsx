@@ -559,8 +559,8 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         if (!isOpen) return;
         setLibLoading(true);
         Promise.all([
-            fetch('http://localhost:3501/api/assets/videos').then(r => r.json()).catch(() => []),
-            fetch('http://localhost:3501/api/assets/images').then(r => r.json()).catch(() => []),
+            fetch('/api/assets/videos').then(r => r.json()).catch(() => []),
+            fetch('/api/assets/images').then(r => r.json()).catch(() => []),
         ])
             .then(([vids, imgs]) => {
                 const vList = (Array.isArray(vids) ? vids : (vids.assets || [])).map((v: any) => ({ ...v, assetType: 'video' as const }));
@@ -572,7 +572,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
             })
             .finally(() => setLibLoading(false));
 
-        fetch('http://localhost:3501/api/video-studio/voices')
+        fetch('/api/video-studio/voices')
             .then(r => r.json())
             .then(d => { if (d.voices) setVoices(d.voices); })
             .catch(() => { /* 用默认音色 */ });
@@ -632,7 +632,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
             return;
         }
 
-        const targetSrc = clip.url.startsWith('http') ? clip.url : `http://localhost:3501${clip.url}`;
+        const targetSrc = clip.url.startsWith('http') ? clip.url : `${clip.url}`;
 
         const seekAndMaybePlay = () => {
             video.currentTime = clip.inPoint + local * clip.speed;
@@ -840,7 +840,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         // 视频：用临时 video 元素探测素材时长
         const probe = document.createElement('video');
         probe.preload = 'metadata';
-        probe.src = v.url.startsWith('http') ? v.url : `http://localhost:3501${v.url}`;
+        probe.src = v.url.startsWith('http') ? v.url : `${v.url}`;
         probe.onloadedmetadata = () => {
             const dur = isFinite(probe.duration) && probe.duration > 0 ? probe.duration : 5;
             appendClip(buildClip(v, dur, dur, false));
@@ -856,7 +856,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         for (const v of list) {
             try {
                 const type = v.assetType === 'image' ? 'images' : 'videos';
-                const res = await fetch(`http://localhost:3501/api/assets/${type}/${v.id}`, { method: 'DELETE' });
+                const res = await fetch(`/api/assets/${type}/${v.id}`, { method: 'DELETE' });
                 if (!res.ok) throw new Error();
                 setLibrary(prev => prev.filter(x => !(x.id === v.id && x.assetType === v.assetType)));
             } catch (_) {
@@ -925,7 +925,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                     fr.onerror = reject;
                     fr.readAsDataURL(file);
                 });
-                const res = await fetch(`http://localhost:3501/api/assets/${isImage ? 'images' : 'videos'}`, {
+                const res = await fetch(`/api/assets/${isImage ? 'images' : 'videos'}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ data: dataUrl, prompt: file.name.replace(/\.[^.]+$/, '') }),
@@ -980,7 +980,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                 fr.onerror = reject;
                 fr.readAsDataURL(file);
             });
-            const res = await fetch('http://localhost:3501/api/video-studio/upload-audio', {
+            const res = await fetch('/api/video-studio/upload-audio', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ filename: file.name, dataBase64: dataUrl }),
@@ -1641,7 +1641,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         setErrorMsg(null);
         try {
             const clipTotal = clips.reduce((s, c) => s + (c.outPoint - c.inPoint), 0);
-            const res = await fetch('http://localhost:3501/api/video-studio/script', {
+            const res = await fetch('/api/video-studio/script', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1673,7 +1673,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
             const newSubs: SubtitleItem[] = [];
             for (let i = 0; i < sentences.length; i++) {
                 setTtsProgress(`正在合成 ${i + 1}/${sentences.length} 句…`);
-                const res = await fetch('http://localhost:3501/api/video-studio/tts', {
+                const res = await fetch('/api/video-studio/tts', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ text: sentences[i], voice }),
@@ -1724,7 +1724,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
             const fontPx = Math.max(12, (defaultStyle.fontScale || 0.052) * r.h);
             // 上限 14 字：横屏分辨率下按宽度能放下 20+ 字，但阅读体验上单条不宜超过 14 字
             const maxLen = Math.max(6, Math.min(14, Math.floor((r.w * (defaultStyle.maxW ?? 0.9)) / fontPx)));
-            const res = await fetch('http://localhost:3501/api/video-studio/transcribe', {
+            const res = await fetch('/api/video-studio/transcribe', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ segments, maxLen }),
@@ -1764,7 +1764,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         setErrorMsg(null);
         try {
             const r = RESOLUTIONS.find(x => x.id === resolution) || RESOLUTIONS[0];
-            const res = await fetch('http://localhost:3501/api/video-studio/export', {
+            const res = await fetch('/api/video-studio/export', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1835,7 +1835,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                 <audio
                     key={a.id}
                     ref={el => { if (el) audioElsRef.current.set(a.id, el); else audioElsRef.current.delete(a.id); }}
-                    src={a.url.startsWith('http') ? a.url : `http://localhost:3501${a.url}`}
+                    src={a.url.startsWith('http') ? a.url : `${a.url}`}
                     preload="auto"
                 />
             ))}
@@ -1853,7 +1853,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                     {errorMsg && <span className="text-xs text-red-400 max-w-[360px] truncate" title={errorMsg}>{errorMsg}</span>}
                     {exportUrl && (
                         <a
-                            href={`http://localhost:3501${exportUrl}`}
+                            href={`${exportUrl}`}
                             download
                             className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-green-600/20 text-green-400 border border-green-700 hover:bg-green-600/30"
                         >
@@ -1981,13 +1981,13 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                             >
                                 {v.assetType === 'image' ? (
                                     <img
-                                        src={v.url.startsWith('http') ? v.url : `http://localhost:3501${v.url}`}
+                                        src={v.url.startsWith('http') ? v.url : `${v.url}`}
                                         loading="lazy"
                                         className="w-full h-14 object-cover pointer-events-none"
                                     />
                                 ) : (
                                     <video
-                                        src={(v.url.startsWith('http') ? v.url : `http://localhost:3501${v.url}`) + '#t=0.5'}
+                                        src={(v.url.startsWith('http') ? v.url : `${v.url}`) + '#t=0.5'}
                                         preload="metadata"
                                         muted
                                         className="w-full h-14 object-cover pointer-events-none"
@@ -2059,7 +2059,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                 {curClip?.isImage && (
                                     <img
                                         ref={imgPreviewRef}
-                                        src={curClip.url.startsWith('http') ? curClip.url : `http://localhost:3501${curClip.url}`}
+                                        src={curClip.url.startsWith('http') ? curClip.url : `${curClip.url}`}
                                         className="block"
                                         style={{
                                             maxWidth: previewSize.w > 0 ? Math.round(previewSize.w * (isFullscreen ? 0.98 : 0.82)) : '100%',

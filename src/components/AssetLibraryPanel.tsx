@@ -51,7 +51,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
     const fetchLibrary = async () => {
         setLoading(true);
         try {
-            const res = await fetch('http://localhost:3501/api/library'); // Adjust port if needed, relative path preferred in helper
+            const res = await fetch('/api/library'); // Adjust port if needed, relative path preferred in helper
             if (res.ok) {
                 setAssets(await res.json());
             }
@@ -64,7 +64,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
 
     const fetchCategories = async () => {
         try {
-            const res = await fetch('http://localhost:3501/api/library/categories');
+            const res = await fetch('/api/library/categories');
             if (res.ok) {
                 const data = await res.json();
                 if (Array.isArray(data.categories)) setCategories(data.categories);
@@ -75,7 +75,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
     };
 
     const handleAddCategory = async (name: string) => {
-        const res = await fetch('http://localhost:3501/api/library/categories', {
+        const res = await fetch('/api/library/categories', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name }),
@@ -90,7 +90,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
     };
 
     const handleDeleteCategory = async (name: string) => {
-        const res = await fetch(`http://localhost:3501/api/library/categories/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        const res = await fetch(`/api/library/categories/${encodeURIComponent(name)}`, { method: 'DELETE' });
         const data = await res.json();
         if (!res.ok) {
             showAppAlert(data.error || '删除分类失败');
@@ -121,7 +121,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                     fr.onerror = reject;
                     fr.readAsDataURL(file);
                 });
-                const res = await fetch('http://localhost:3501/api/library', {
+                const res = await fetch('/api/library', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -146,7 +146,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
         // Confirmation is now handled in the UI before this is called
 
         try {
-            const res = await fetch(`http://localhost:3501/api/library/${id}`, {
+            const res = await fetch(`/api/library/${id}`, {
                 method: 'DELETE'
             });
             if (res.ok) {
@@ -164,7 +164,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
         let failed = 0;
         for (const id of ids) {
             try {
-                const res = await fetch(`http://localhost:3501/api/library/${id}`, { method: 'DELETE' });
+                const res = await fetch(`/api/library/${id}`, { method: 'DELETE' });
                 if (!res.ok) failed++;
             } catch (_) {
                 failed++;

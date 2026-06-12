@@ -474,10 +474,22 @@ export default function App() {
   // 十几个生图请求同时挂起会饿死图片预览请求，导致节点裂图。
   const storyAutoGenRef = useRef<{ assetIds: string[]; shotIds: string[]; phase: 'assets' | 'shots' | 'done'; launched: Set<string> } | null>(null);
 
+  // 生成并发数：从「设置」读取（GEN_CONCURRENCY，1-6），默认 3
+  const genConcurrencyRef = useRef(3);
+  const refreshGenConcurrency = React.useCallback(async () => {
+    try {
+      const data = await fetch('/api/settings').then(r => r.json());
+      const v = parseInt(data?.settings?.GEN_CONCURRENCY, 10);
+      genConcurrencyRef.current = Number.isFinite(v) ? Math.min(6, Math.max(1, v)) : 3;
+    } catch { /* 读取失败时沿用当前值 */ }
+    return genConcurrencyRef.current;
+  }, []);
+  useEffect(() => { refreshGenConcurrency(); }, [refreshGenConcurrency]);
+
   useEffect(() => {
     const st = storyAutoGenRef.current;
     if (!st || st.phase === 'done') return;
-    const MAX_CONCURRENT = 3;
+    const MAX_CONCURRENT = genConcurrencyRef.current;
     const isDone = (n: NodeData) => n.status === NodeStatus.SUCCESS || n.status === NodeStatus.ERROR;
 
     const ids = st.phase === 'assets' ? st.assetIds : st.shotIds;
@@ -584,11 +596,12 @@ export default function App() {
     }
   }, [nodes, batchSaving]);
 
-  const handleBatchGenerate = React.useCallback((kind: 'image' | 'video', scope: 'idle' | 'failed' | 'all') => {
+  const handleBatchGenerate = React.useCallback(async (kind: 'image' | 'video', scope: 'idle' | 'failed' | 'all') => {
     const targets = nodes.filter(n => (kind === 'image' ? isImageGenNode(n) : isVideoGenNode(n)) && matchScope(n, scope));
     if (targets.length === 0) return;
+    await refreshGenConcurrency(); // 用「设置」里最新的并发数调度
     const ids = new Set(targets.map(n => n.id));
-    // 重置为待生成（清掉失败信息），由并发队列按 3 个一批调度
+    // 重置为待生成（清掉失败信息），由并发队列调度
     setNodes(prev => prev.map(n => ids.has(n.id) ? { ...n, status: NodeStatus.IDLE, errorMessage: undefined } : n));
     storyAutoGenRef.current = {
       assetIds: kind === 'image' ? targets.map(n => n.id) : [],
@@ -597,7 +610,7 @@ export default function App() {
       launched: new Set(),
     };
     setIsBatchGenOpen(false);
-  }, [nodes, setNodes]);
+  }, [nodes, setNodes, refreshGenConcurrency]);
 
   const handleCreateStoryWorkflow = React.useCallback((result: StoryWorkflowResult, opts: { autoGenerate: boolean; aspectRatio?: string }) => {
     const GAP_X = 160;
@@ -611,11 +624,11 @@ export default function App() {
       baseX = Math.max(...nodes.map(n => n.x + getNodeWidth(n))) + 320;
     }
 
+    // 不写死 imageModel/videoModel：留空让后端使用「设置」里配置的模型，
+    // 否则外接其他平台时会被这里的 gpt2api 模型名覆盖
     const defaults = {
       status: NodeStatus.IDLE,
       model: 'Banana Pro',
-      imageModel: 'nano-banana-pro',
-      videoModel: 'veo3.1-lite',
       resolution: '1K',
     };
 
@@ -729,6 +742,7 @@ export default function App() {
 
     // 自动生图：先资产后分镜（由 effect 中的并发队列驱动，限制同时生成数量）
     if (opts.autoGenerate && assetNodes.length > 0) {
+      refreshGenConcurrency(); // 异步刷新并发数设置，队列每一波调度时读取最新值
       storyAutoGenRef.current = {
         assetIds: assetNodes.map(n => n.id),
         shotIds: shotNodes.map(n => n.id),
@@ -738,7 +752,7 @@ export default function App() {
     } else {
       storyAutoGenRef.current = null;
     }
-  }, [nodes, setNodes, setSelectedNodeIds, setViewport]);
+  }, [nodes, setNodes, setSelectedNodeIds, setViewport, refreshGenConcurrency]);
 
   const handleEditStoryboard = React.useCallback((groupId: string) => {
     const group = groups.find(g => g.id === groupId);
@@ -1705,7 +1719,7 @@ export default function App() {
               className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full transition-colors disabled:opacity-40 ${failedNodeCount > 0
                 ? 'text-red-400 hover:bg-red-500/10 hover:text-red-300'
                 : canvasTheme === 'dark' ? 'text-neutral-300 hover:bg-neutral-800 hover:text-white' : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'}`}
-              title="批量生成图片/视频（未生成、失败或全部，最多 3 个并发）"
+              title="批量生成图片/视频（未生成、失败或全部，并发数可在「设置」中调整）"
             >
               <RotateCcw size={13} />
               批量生成{failedNodeCount > 0 ? ` (${failedNodeCount} 失败)` : ''}
@@ -1756,7 +1770,7 @@ export default function App() {
                     ))}
                   </div>
                   <div className={`mt-1.5 pt-1.5 border-t text-[10px] ${canvasTheme === 'dark' ? 'border-neutral-800 text-neutral-600' : 'border-neutral-100 text-neutral-400'}`}>
-                    最多 3 个并发，按队列依次生成；「全部」会重新生成已有内容；「存素材」把已生成内容批量存入素材库
+                    按队列依次生成（并发数在「设置 · 生成设置」中调整）；「全部」会重新生成已有内容；「存素材」把已生成内容批量存入素材库
                   </div>
                 </div>
               </>

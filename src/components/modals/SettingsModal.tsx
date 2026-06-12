@@ -63,6 +63,13 @@ const GROUPS: GroupDef[] = [
             { key: 'ASR_MODEL', label: '模型名', placeholder: 'mimo-v2.5-asr', hint: '例如 mimo-v2.5-asr / whisper-1' },
         ],
     },
+    {
+        title: '生成设置',
+        desc: '批量生成与一键创作的调度参数。',
+        fields: [
+            { key: 'GEN_CONCURRENCY', label: '生成并发数', placeholder: '3', hint: '同时进行的生图/生视频任务数，1-6。过大可能触发接口限流或导致预览加载失败' },
+        ],
+    },
 ];
 
 // 仅 *_API_KEY 字段以密码形式遮蔽；网址、模型名以明文显示
