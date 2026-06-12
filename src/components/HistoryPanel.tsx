@@ -60,6 +60,8 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
     const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
     const [imageTotalCount, setImageTotalCount] = useState<number>(0);
     const [videoTotalCount, setVideoTotalCount] = useState<number>(0);
+    const [cleanConfirm, setCleanConfirm] = useState<'old' | 'all' | null>(null); // 批量清理确认
+    const [cleaning, setCleaning] = useState(false);
 
     // --- Refs ---
     const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -197,6 +199,31 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
         setDeleteConfirm(null);
     };
 
+    /** 批量清理当前标签页的历史：'old' = 3 天前，'all' = 全部 */
+    const handleClean = async (mode: 'old' | 'all') => {
+        setCleaning(true);
+        try {
+            const response = await fetch(`/api/assets/${activeTab}/clean`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(mode === 'old' ? { olderThanDays: 3 } : {}),
+            });
+            if (response.ok) {
+                // 重新拉取当前页与计数
+                setAssets([]);
+                setOffset(0);
+                setHasMore(true);
+                await fetchAssets(0, true);
+                await fetchCounts();
+            }
+        } catch (error) {
+            console.error('Failed to clean assets:', error);
+        } finally {
+            setCleaning(false);
+            setCleanConfirm(null);
+        }
+    };
+
     const handleSelectAsset = (asset: AssetMetadata) => {
         // Construct full URL for the asset
         const fullUrl = `${asset.url}`;
@@ -250,12 +277,30 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
                             视频历史 ({videoTotalCount})
                         </button>
                     </div>
-                    <button
-                        onClick={onClose}
-                        className={`transition-colors ${isDark ? 'text-neutral-500 hover:text-white' : 'text-neutral-400 hover:text-neutral-900'}`}
-                    >
-                        <Maximize2 size={18} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setCleanConfirm('old')}
+                            disabled={cleaning || (activeTab === 'images' ? imageTotalCount : videoTotalCount) === 0}
+                            className={`px-2.5 py-1 rounded-full text-xs border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${isDark ? 'text-neutral-400 border-neutral-700 hover:text-white hover:border-neutral-500' : 'text-neutral-500 border-neutral-300 hover:text-neutral-900 hover:border-neutral-400'}`}
+                            title={`清理 3 天前的${activeTab === 'images' ? '图像' : '视频'}历史`}
+                        >
+                            清理3天前
+                        </button>
+                        <button
+                            onClick={() => setCleanConfirm('all')}
+                            disabled={cleaning || (activeTab === 'images' ? imageTotalCount : videoTotalCount) === 0}
+                            className="px-2.5 py-1 rounded-full text-xs border border-red-500/40 text-red-400 hover:bg-red-500/10 hover:border-red-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            title={`清空全部${activeTab === 'images' ? '图像' : '视频'}历史`}
+                        >
+                            清空全部
+                        </button>
+                        <button
+                            onClick={onClose}
+                            className={`ml-1 transition-colors ${isDark ? 'text-neutral-500 hover:text-white' : 'text-neutral-400 hover:text-neutral-900'}`}
+                        >
+                            <Maximize2 size={18} />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Content */}
@@ -342,6 +387,39 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
                     )}
                 </div>
             </div>
+
+            {/* Clean Confirmation Modal */}
+            {cleanConfirm && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+                    <div className={`border rounded-2xl p-6 w-[360px] shadow-2xl ${isDark ? 'bg-[#1a1a1a] border-neutral-700' : 'bg-white border-neutral-200'}`}>
+                        <h3 className={`text-lg font-semibold mb-2 ${isDark ? 'text-white' : 'text-neutral-900'}`}>
+                            {cleanConfirm === 'old' ? '清理 3 天前的历史' : '清空全部历史'}
+                        </h3>
+                        <p className={`text-sm mb-6 ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
+                            {cleanConfirm === 'old'
+                                ? `将删除 3 天前生成的所有${activeTab === 'images' ? '图像' : '视频'}文件，此操作无法撤销。`
+                                : `将删除全部 ${activeTab === 'images' ? imageTotalCount + ' 个图像' : videoTotalCount + ' 个视频'}文件，此操作无法撤销。`}
+                        </p>
+                        <div className="flex gap-3 justify-end">
+                            <button
+                                onClick={() => setCleanConfirm(null)}
+                                disabled={cleaning}
+                                className={`px-4 py-2 rounded-lg text-sm transition-colors ${isDark ? 'bg-neutral-800 hover:bg-neutral-700 text-white' : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-900'}`}
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={() => handleClean(cleanConfirm)}
+                                disabled={cleaning}
+                                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm transition-colors flex items-center gap-2 disabled:opacity-60"
+                            >
+                                {cleaning && <Loader2 size={14} className="animate-spin" />}
+                                {cleanConfirm === 'old' ? '清理' : '清空'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Delete Confirmation Modal */}
             {deleteConfirm && (

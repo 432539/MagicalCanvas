@@ -1022,6 +1022,54 @@ app.delete('/api/assets/:type/:id', async (req, res) => {
     }
 });
 
+// 批量清理历史素材：body.olderThanDays = N 清理 N 天前的；不传则清空全部
+app.post('/api/assets/:type/clean', async (req, res) => {
+    try {
+        const { type } = req.params;
+        const { olderThanDays } = req.body || {};
+
+        if (!['images', 'videos'].includes(type)) {
+            return res.status(400).json({ error: 'Invalid asset type' });
+        }
+
+        const targetDir = type === 'images' ? IMAGES_DIR : VIDEOS_DIR;
+        if (!fs.existsSync(targetDir)) {
+            return res.json({ success: true, deleted: 0 });
+        }
+
+        const days = Number(olderThanDays);
+        const cutoff = Number.isFinite(days) && days > 0 ? Date.now() - days * 86400000 : null;
+        let deleted = 0;
+
+        for (const file of fs.readdirSync(targetDir)) {
+            if (!file.endsWith('.json')) continue;
+            const metaPath = path.join(targetDir, file);
+            try {
+                const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+                if (cutoff) {
+                    const created = new Date(meta.createdAt).getTime();
+                    // createdAt 无效或晚于截止时间的保留（NaN 比较为 false，自动保留）
+                    if (!(created < cutoff)) continue;
+                }
+                if (meta.filename) {
+                    const assetPath = path.join(targetDir, meta.filename);
+                    if (fs.existsSync(assetPath)) fs.unlinkSync(assetPath);
+                }
+                fs.unlinkSync(metaPath);
+                deleted++;
+            } catch (e) {
+                console.warn(`[Clean] Skip ${file}:`, e.message);
+            }
+        }
+
+        console.log(`[Clean] ${type}: deleted ${deleted} assets (olderThanDays=${olderThanDays ?? 'all'})`);
+        res.json({ success: true, deleted });
+    } catch (error) {
+        console.error('Clean assets error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // ============================================================================
 // VIDEO TRIM API
 // ============================================================================
