@@ -212,20 +212,51 @@ export function useChatAgent(): UseChatAgentReturn {
                 throw new Error(errData.error || response.statusText);
             }
 
-            const data = await response.json();
-
-            // Add AI response
-            const aiMessage: ChatMessage = {
-                id: generateMessageId(),
-                role: 'assistant',
-                content: data.response,
-                timestamp: new Date(),
+            // SSE 流式接收：delta 增量实时渲染到一条占位的 AI 消息上
+            const aiMessageId = generateMessageId();
+            let aiText = '';
+            let gotDone = false;
+            const upsertAiMessage = (text: string) => {
+                setMessages(prev => {
+                    const idx = prev.findIndex(m => m.id === aiMessageId);
+                    const msg: ChatMessage = { id: aiMessageId, role: 'assistant', content: text, timestamp: new Date() };
+                    if (idx === -1) return [...prev, msg];
+                    const next = [...prev];
+                    next[idx] = { ...next[idx], content: text };
+                    return next;
+                });
             };
-            setMessages(prev => [...prev, aiMessage]);
 
-            // Update topic if returned
-            if (data.topic) {
-                setTopic(data.topic);
+            const reader = response.body!.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    let evt: any;
+                    try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+                    if (evt.type === 'delta' && evt.text) {
+                        aiText += evt.text;
+                        upsertAiMessage(aiText);
+                    } else if (evt.type === 'done') {
+                        gotDone = true;
+                        upsertAiMessage(evt.response || aiText);
+                        if (evt.topic) setTopic(evt.topic);
+                        setIsLoading(false); // 回复已完整，标题生成不再转圈
+                    } else if (evt.type === 'topic') {
+                        if (evt.topic) setTopic(evt.topic);
+                    } else if (evt.type === 'error') {
+                        throw new Error(evt.error || 'Chat failed');
+                    }
+                }
+            }
+            if (!gotDone && !aiText) {
+                throw new Error('连接中断，未收到回复');
             }
 
             // Refresh sessions list to show the new/updated session

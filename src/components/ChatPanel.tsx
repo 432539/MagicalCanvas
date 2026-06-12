@@ -8,7 +8,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, History, Paperclip, Globe, Settings, Send, Sparkles, Plus, Loader2, ChevronLeft, Trash2, MessageSquare } from 'lucide-react';
+import { X, History, Paperclip, Send, Sparkles, Plus, Loader2, ChevronLeft, Trash2, MessageSquare } from 'lucide-react';
 import { ChatMessage } from './ChatMessage';
 import { useChatAgent, ChatMessage as ChatMessageType, ChatSession } from '../hooks/useChatAgent';
 
@@ -149,6 +149,28 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
     const removeAttachment = (nodeId: string) => {
         setAttachedMedia(prev => prev.filter(m => m.nodeId !== nodeId));
+    };
+
+    // 回形针：从本地选择图片作为附件（与拖入节点共用 attachedMedia 流程）
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const handlePickFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('image/')).slice(0, 4);
+        e.target.value = ''; // 允许重复选择同一文件
+        for (const file of files) {
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+            const id = `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            setAttachedMedia(prev => [...prev, {
+                type: 'image',
+                url: dataUrl,
+                nodeId: id,
+                base64: dataUrl.split(',')[1],
+            }]);
+        }
     };
 
     const handleSend = async () => {
@@ -479,17 +501,23 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     />
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                            <button className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-neutral-700 text-neutral-400' : 'hover:bg-neutral-200 text-neutral-500'}`}>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                className="hidden"
+                                onChange={handlePickFiles}
+                            />
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                title="附加本地图片（也可以直接把画布节点拖进来）"
+                                className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-neutral-700 text-neutral-400 hover:text-white' : 'hover:bg-neutral-200 text-neutral-500 hover:text-neutral-900'}`}
+                            >
                                 <Paperclip size={16} />
                             </button>
                         </div>
                         <div className="flex items-center gap-2">
-                            <button className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-neutral-700 text-neutral-400' : 'hover:bg-neutral-200 text-neutral-500'}`}>
-                                <Globe size={16} />
-                            </button>
-                            <button className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-neutral-700 text-neutral-400' : 'hover:bg-neutral-200 text-neutral-500'}`}>
-                                <Settings size={16} />
-                            </button>
                             <button
                                 onClick={handleSend}
                                 disabled={isLoading || (!message.trim() && !attachedMedia)}

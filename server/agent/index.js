@@ -50,7 +50,8 @@ export async function generateTopicTitle(messages) {
         { role: 'system', content: TOPIC_GENERATION_PROMPT },
         { role: 'user', content: userText || 'New conversation' },
     ];
-    const title = await gpt2apiChat({ messages: oaMessages, model, baseUrl, apiKey, temperature: 0.3, maxTokens: 32 });
+    // maxTokens 不能太小：思考型模型（gpt-5 系）会先消耗推理 token，给太少会导致正文为空
+    const title = await gpt2apiChat({ messages: oaMessages, model, baseUrl, apiKey, temperature: 0.3, maxTokens: 1024 });
     return (title || 'New Chat').trim().replace(/^["']|["']$/g, '').slice(0, 40) || 'New Chat';
 }
 
@@ -333,7 +334,7 @@ export function getSessionData(sessionId) {
  * @param {string} apiKey - Google AI API key
  * @returns {Promise<object>} { response: string, topic?: string }
  */
-export async function sendMessage(sessionId, content, media, apiKey) {
+export async function sendMessage(sessionId, content, media, apiKey, onDelta) {
     const session = getSession(sessionId);
     const { apiKey: gptKey, baseUrl, model } = getTextConfig();
 
@@ -398,7 +399,7 @@ export async function sendMessage(sessionId, content, media, apiKey) {
 
     // Call gpt2api (OpenAI-compatible chat completions)
     const oaMessages = toOpenAIMessages(session.messages);
-    const responseText = await gpt2apiChat({ messages: oaMessages, model, baseUrl, apiKey: gptKey });
+    const responseText = await gpt2apiChat({ messages: oaMessages, model, baseUrl, apiKey: gptKey, onDelta });
     const aiResponse = new AIMessage(responseText || '');
     session.messages.push(aiResponse);
 
@@ -419,16 +420,21 @@ export async function sendMessage(sessionId, content, media, apiKey) {
         session.messages[userMsgIndex] = newMsg;
     }
 
-    // Generate topic if this is the first exchange (2 messages: user + AI)
+    // Generate topic if this is the first exchange (2 messages: user + AI).
+    // 不阻塞主回复：标题在后台生成，调用方可在回复送达后再等它（流式场景下避免多等一轮 LLM）。
     let topic = session.topic;
+    let topicPromise = null;
     if (session.messages.length === 2 && !session.topic) {
-        try {
-            topic = await generateTopicTitle(session.messages);
-            session.topic = topic;
-        } catch (err) {
-            console.error("Failed to generate topic:", err);
-            topic = "New Chat";
-        }
+        topicPromise = generateTopicTitle(session.messages)
+            .then(t => {
+                session.topic = t;
+                saveSession(sessionId, session);
+                return t;
+            })
+            .catch(err => {
+                console.error("Failed to generate topic:", err);
+                return "New Chat";
+            });
     }
 
     // Save session to disk after each message
@@ -437,6 +443,7 @@ export async function sendMessage(sessionId, content, media, apiKey) {
     return {
         response: aiResponse.content.toString(),
         topic: topic,
+        topicPromise,
         messageCount: session.messages.length,
     };
 }

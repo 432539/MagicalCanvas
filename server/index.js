@@ -1182,34 +1182,52 @@ app.post('/api/trim-video', async (req, res) => {
 // ============================================================================
 
 // Send a message to the chat agent
+// 聊天（SSE 流式）：模型生成的文字逐段推送，避免长回复时前端一直转圈。
+// 事件：{type:'delta', text} 增量 → {type:'done', response, topic, messageCount} → 可选 {type:'topic', topic}
 app.post('/api/chat', async (req, res) => {
+    const { sessionId, message, media } = req.body;
+
+    const API_KEY = getKey('TEXT_API_KEY');
+    if (!API_KEY) {
+        return res.status(500).json({ error: "未配置文字模型 KEY，请在「设置」中填写后再使用聊天" });
+    }
+    if (!sessionId) {
+        return res.status(400).json({ error: "sessionId is required" });
+    }
+    if (!message && !media) {
+        return res.status(400).json({ error: "message or media is required" });
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+    const send = (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch { /* 客户端可能已断开 */ } };
+
     try {
-        const { sessionId, message, media } = req.body;
+        let sentLen = 0;
+        const result = await chatAgent.sendMessage(sessionId, message, media, API_KEY, (delta, total) => {
+            // gpt2apiChat 的 onDelta 给的是增量片段；直接推增量
+            if (delta) { sentLen = total; send({ type: 'delta', text: delta }); }
+        });
 
-        const API_KEY = getKey('TEXT_API_KEY');
-        if (!API_KEY) {
-            return res.status(500).json({ error: "未配置文字模型 KEY，请在「设置」中填写后再使用聊天" });
-        }
-
-        if (!sessionId) {
-            return res.status(400).json({ error: "sessionId is required" });
-        }
-
-        if (!message && !media) {
-            return res.status(400).json({ error: "message or media is required" });
-        }
-
-        const result = await chatAgent.sendMessage(sessionId, message, media, API_KEY);
-
-        res.json({
-            success: true,
+        send({
+            type: 'done',
             response: result.response,
             topic: result.topic,
-            messageCount: result.messageCount
+            messageCount: result.messageCount,
         });
+
+        // 首轮对话的标题在后台生成，生成完再补发一个事件（不阻塞回复展示）
+        if (result.topicPromise) {
+            const topic = await result.topicPromise;
+            send({ type: 'topic', topic });
+        }
+        res.end();
     } catch (error) {
         console.error("Chat API Error:", error);
-        res.status(500).json({ error: error.message || "Chat failed" });
+        send({ type: 'error', error: error.message || "Chat failed" });
+        res.end();
     }
 });
 
