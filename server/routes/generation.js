@@ -233,11 +233,8 @@ router.post('/generate-video', async (req, res) => {
             if (!VIDEO_API_KEY) {
                 return res.status(500).json({ error: "未配置视频模型 KEY，请在「设置」中填写" });
             }
-            // 节点上选择的模型优先；其次「设置」里的模型；都没有则用可稳定下载结果的 veo3.1-lite。
-            // grok-imagine-video 的结果托管在 assets.grok.com（防盗链 403 无法下载），
-            // 旧工作流节点上残留的该模型一律回退到设置里的模型（仍想用可在「设置」中显式填写）。
-            const requestedModel = videoModel && isGpt2apiVideoModel(videoModel) && videoModel !== 'grok-imagine-video'
-                ? videoModel : null;
+            // 节点上选择的模型优先；其次「设置」里的模型；都没有则用 veo3.1-lite
+            const requestedModel = videoModel && isGpt2apiVideoModel(videoModel) ? videoModel : null;
             const resolvedVideoModel = requestedModel || VIDEO_MODEL || 'veo3.1-lite';
             console.log(`Using video model: ${resolvedVideoModel} @ ${VIDEO_API_URL}, duration: ${duration || 6}s`);
             videoBuffer = await generateGpt2apiVideo({

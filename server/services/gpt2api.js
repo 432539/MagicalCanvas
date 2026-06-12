@@ -205,22 +205,34 @@ export async function generateGpt2apiVideo({ prompt, imageBase64, lastFrameBase6
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error?.message || data?.error || `视频请求失败 (HTTP ${res.status})`);
 
+    const taskId = data.task_id || data.id;
     let item = extractSyncItem(data);
     if (!item) {
-        const taskId = data.task_id || data.id;
         if (!taskId) throw new Error('视频接口未返回结果或 task_id');
         item = await pollTask(`${base}/video/generations/${taskId}`, apiKey, { timeoutMs: 900000 });
     }
-    try {
-        return await downloadToBuffer(item.url);
-    } catch (e) {
-        // grok-imagine-video 的结果存放在 assets.grok.com，有防盗链（直接下载 403）。
-        // 视频实际已生成并计费，但拿不到文件——提示用户换可下载的模型。
-        if (String(item.url).includes('assets.grok.com')) {
-            throw new Error('视频已生成，但 Grok 官方资产服务器拒绝下载（防盗链限制）。请在节点或「设置」中把视频模型换成 veo3.1-lite / veo3.1 / sora 后重试');
+
+    // 中转站自带结果代理：/api/v1/gen/assets/{taskId}/0.mp4。
+    // grok-imagine-video 等模型的 result.url 是上游原始地址（assets.grok.com，
+    // 需要 grok.com 登录态，直接下载 403），但代理地址可以正常下载。
+    const origin = base.replace(/\/v\d+$/, '');
+    const proxyUrl = taskId ? `${origin}/api/v1/gen/assets/${taskId}/0.mp4` : null;
+    const preferProxy = String(item.url).includes('assets.grok.com');
+
+    const candidates = preferProxy
+        ? [proxyUrl, item.url].filter(Boolean)
+        : [item.url, proxyUrl].filter(Boolean);
+
+    let lastErr;
+    for (const url of candidates) {
+        try {
+            return await downloadToBuffer(url, { retries: 1 });
+        } catch (e) {
+            lastErr = e;
+            console.warn(`[gpt2api] 视频下载失败 (${url})，尝试备用地址:`, e.message);
         }
-        throw e;
     }
+    throw lastErr || new Error('视频下载失败');
 }
 
 /**

@@ -46,7 +46,6 @@ export const DEFAULTS = {
     IMAGE_API_URL: 'https://www.gpt2api.com/v1',
     IMAGE_MODEL: 'nano-banana-pro',
     VIDEO_API_URL: 'https://www.gpt2api.com/v1',
-    // grok-imagine-video 结果托管在 assets.grok.com（防盗链 403），默认用可下载的 veo3.1-lite
     VIDEO_MODEL: 'veo3.1-lite',
     ASR_MODEL: 'whisper-1',
 };

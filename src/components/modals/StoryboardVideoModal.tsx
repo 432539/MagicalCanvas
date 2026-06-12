@@ -39,8 +39,7 @@ const VIDEO_MODELS = [
     { id: 'veo3.1', name: 'VEO 3.1', provider: 'gpt2api', durations: [4, 6, 8], resolutions: ['720p', '1080p'] },
     { id: 'veo3.1-flash', name: 'VEO 3.1 Flash', provider: 'gpt2api', durations: [4, 6, 8], resolutions: ['720p', '1080p'] },
     { id: 'sora', name: 'Sora 2', provider: 'gpt2api', durations: [4, 8, 12], resolutions: ['720p', '1080p'] },
-    // grok-imagine-video 结果托管在 assets.grok.com（防盗链），下载会 403，暂不可用
-    { id: 'grok-imagine-video', name: 'Grok Imagine（下载受限）', provider: 'gpt2api', durations: [6, 10, 20, 30], resolutions: ['720p', '1080p'] },
+    { id: 'grok-imagine-video', name: 'Grok Imagine Video', provider: 'gpt2api', durations: [6, 10, 20, 30], resolutions: ['720p', '1080p'] },
     {
         id: 'veo-3.1',
         name: 'Veo 3.1',
