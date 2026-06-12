@@ -8,6 +8,8 @@
 
 import React, { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 // ============================================================================
 // TYPES
@@ -161,15 +163,47 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                     </div>
                 )}
 
-                {/* Message Content with Code Blocks */}
+                {/* Message Content: 围栏代码块用带复制按钮的 CodeBlock，其余文本走 Markdown 渲染 */}
                 <div className="text-sm leading-relaxed select-text cursor-text">
                     {segments.map((segment, index) => (
                         segment.type === 'code' ? (
                             <CodeBlock key={index} code={segment.content} />
                         ) : (
-                            <div key={index} className="whitespace-pre-wrap">
+                            <ReactMarkdown
+                                key={index}
+                                remarkPlugins={[remarkGfm]}
+                                components={{
+                                    p: ({ children }) => <p className="my-1.5 first:mt-0 last:mb-0">{children}</p>,
+                                    strong: ({ children }) => <strong className={`font-semibold ${isUser ? 'text-white' : 'text-cyan-300'}`}>{children}</strong>,
+                                    em: ({ children }) => <em className="italic">{children}</em>,
+                                    ul: ({ children }) => <ul className="my-1.5 pl-5 list-disc space-y-1">{children}</ul>,
+                                    ol: ({ children }) => <ol className="my-1.5 pl-5 list-decimal space-y-1">{children}</ol>,
+                                    li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                                    h1: ({ children }) => <h1 className="text-base font-bold mt-3 mb-1.5">{children}</h1>,
+                                    h2: ({ children }) => <h2 className="text-base font-bold mt-3 mb-1.5">{children}</h2>,
+                                    h3: ({ children }) => <h3 className="text-sm font-bold mt-2.5 mb-1">{children}</h3>,
+                                    h4: ({ children }) => <h4 className="text-sm font-semibold mt-2 mb-1">{children}</h4>,
+                                    a: ({ href, children }) => (
+                                        <a href={href} target="_blank" rel="noopener noreferrer" className={`underline ${isUser ? 'text-cyan-100' : 'text-cyan-400 hover:text-cyan-300'}`}>{children}</a>
+                                    ),
+                                    blockquote: ({ children }) => (
+                                        <blockquote className={`border-l-2 pl-3 my-1.5 ${isUser ? 'border-cyan-300/60 text-cyan-50' : 'border-neutral-600 text-neutral-400'}`}>{children}</blockquote>
+                                    ),
+                                    code: ({ children }) => (
+                                        <code className={`px-1 py-0.5 rounded text-[12px] ${isUser ? 'bg-cyan-700/70 text-cyan-50' : 'bg-neutral-900 text-cyan-300'}`}>{children}</code>
+                                    ),
+                                    hr: () => <hr className={`my-2 ${isUser ? 'border-cyan-400/40' : 'border-neutral-700'}`} />,
+                                    table: ({ children }) => (
+                                        <div className="overflow-x-auto my-2">
+                                            <table className="text-xs border-collapse">{children}</table>
+                                        </div>
+                                    ),
+                                    th: ({ children }) => <th className={`border px-2 py-1 text-left font-semibold ${isUser ? 'border-cyan-400/40' : 'border-neutral-700 bg-neutral-900'}`}>{children}</th>,
+                                    td: ({ children }) => <td className={`border px-2 py-1 ${isUser ? 'border-cyan-400/40' : 'border-neutral-700'}`}>{children}</td>,
+                                }}
+                            >
                                 {segment.content}
-                            </div>
+                            </ReactMarkdown>
                         )
                     ))}
                 </div>
