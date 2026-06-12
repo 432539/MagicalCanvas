@@ -202,6 +202,8 @@ export function useChatAgent(): UseChatAgentReturn {
                     message: content,
                     media: media ? media.map(m => ({
                         type: m.type,
+                        // 库内路径直接传 url（后端历史记录直接引用，不重复存盘）；data URL 不传避免体积翻倍
+                        url: m.url && !m.url.startsWith('data:') ? m.url : undefined,
                         base64: m.base64 || m.url, // Use base64 if available, otherwise URL
                     })) : undefined,
                 }),

@@ -114,6 +114,48 @@ function resolveImageToBase64(imageInput) {
     return imageInput;
 }
 
+/**
+ * 把聊天附件持久化：库内/网络 URL 直接引用；base64（含 data URL）写入 library/images
+ * 并返回 /library/images/... 路径。失败返回 null（该附件历史里不显示但不影响发送）。
+ */
+function persistMediaToLibrary(m, idx) {
+    try {
+        // 已有可持久引用的 URL（画布节点拖入的素材）
+        if (m.url && !m.url.startsWith('data:')) {
+            if (m.url.startsWith('http')) {
+                try { return new URL(m.url).pathname; } catch { return m.url; }
+            }
+            return m.url;
+        }
+        let src = m.base64 || m.url || '';
+        if (typeof src !== 'string' || !src) return null;
+        // base64 字段里塞的是路径（旧调用方式）
+        if (!src.startsWith('data:') && (src.startsWith('/library/') || src.startsWith('http'))) {
+            try { return src.startsWith('http') ? new URL(src).pathname : src; } catch { return src; }
+        }
+
+        let ext = m.type === 'video' ? 'mp4' : 'png';
+        let base64Data = src;
+        if (src.startsWith('data:')) {
+            const mime = src.slice(5, src.indexOf(';'));
+            if (mime === 'image/jpeg') ext = 'jpg';
+            else if (mime === 'image/webp') ext = 'webp';
+            else if (mime === 'image/gif') ext = 'gif';
+            base64Data = src.split(',')[1] || '';
+        }
+        if (!base64Data || base64Data.length < 50) return null;
+
+        const dir = m.type === 'video' ? path.join(LIBRARY_DIR, 'videos') : IMAGES_DIR;
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const filename = `chat_${Date.now()}_${idx}.${ext}`;
+        fs.writeFileSync(path.join(dir, filename), base64Data, 'base64');
+        return `/library/${m.type === 'video' ? 'videos' : 'images'}/${filename}`;
+    } catch (err) {
+        console.warn('[Chat] persist media failed:', err.message);
+        return null;
+    }
+}
+
 // ============================================================================
 // SESSION MANAGEMENT (FILE-BASED)
 // ============================================================================
@@ -380,19 +422,15 @@ export async function sendMessage(sessionId, content, media, apiKey, onDelta) {
     // Add user message to session
     const userMessage = new HumanMessage(messageContent);
 
-    // Attach metadata for persistence (excluding base64 to save space)
+    // Attach metadata for persistence (excluding base64 to save space).
+    // 上传的图片落盘到 library，历史记录里只存 /library 路径——
+    // 否则重开软件后 base64 没保存，历史里的图片显示不出来。
     if (media && Array.isArray(media)) {
         userMessage.additional_kwargs = {
             ...userMessage.additional_kwargs,
-            media: media.map(m => {
-                // If base64 field contains a URL, preserve it as url
-                let url = m.url;
-                const b64 = m.base64;
-                if (!url && b64 && !b64.startsWith('data:')) {
-                    url = b64;
-                }
-                return { ...m, url, base64: undefined };
-            })
+            media: media
+                .map((m, idx) => ({ ...m, url: persistMediaToLibrary(m, idx), base64: undefined }))
+                .filter(m => !!m.url),
         };
     }
 
