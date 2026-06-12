@@ -711,8 +711,19 @@ router.post('/export', async (req, res) => {
                 scale: Math.min(1.5, Math.max(0.1, Number(o.scale) || 0.4)),
                 posX: Math.min(1, Math.max(-1, Number(o.posX) || 0)),
                 posY: Math.min(1, Math.max(-1, Number(o.posY) || 0)),
+                mask: o.mask === 'circle' || o.mask === 'roundrect' ? o.mask : 'none',
             });
         }
+
+        /** 画中画蒙版 → geq alpha 表达式（circle=内切椭圆，roundrect=圆角矩形，半径取短边 12%） */
+        const overlayMaskAlpha = (mask) => {
+            if (mask === 'circle') return '255*lte(pow(2*X/W-1,2)+pow(2*Y/H-1,2),1)';
+            if (mask === 'roundrect') {
+                const R = 'min(W,H)*0.12';
+                return `255*lte(pow(max(abs(X-W/2)-(W/2-${R}),0),2)+pow(max(abs(Y-H/2)-(H/2-${R}),0),2),pow(${R},2))`;
+            }
+            return null;
+        };
 
         // 解析贴纸（前端已渲染为 PNG dataURL）
         const stickerInfos = [];
@@ -881,8 +892,13 @@ router.post('/export', async (req, res) => {
                 parts.push(`trim=start=${oi.inP.toFixed(3)}:end=${oi.outP.toFixed(3)}`, 'setpts=PTS-STARTPTS');
                 if (oi.speed !== 1) parts.push(`setpts=PTS/${oi.speed.toFixed(4)}`);
             }
+            parts.push(`scale=trunc(${width}*${oi.scale.toFixed(4)}/2)*2:-2`);
+            const maskA = overlayMaskAlpha(oi.mask);
+            if (maskA) {
+                // 加 alpha 通道并按蒙版形状抠出（蒙版外全透明）
+                parts.push('format=yuva444p', `geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='${maskA}'`);
+            }
             parts.push(
-                `scale=trunc(${width}*${oi.scale.toFixed(4)}/2)*2:-2`,
                 `fps=${fps}`,
                 `setpts=PTS+${oi.start.toFixed(3)}/TB`
             );

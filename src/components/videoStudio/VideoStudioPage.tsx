@@ -111,11 +111,28 @@ const aTrack = (a: AudioItem) => Math.max(0, a.track ?? 0);
 
 const MAX_AUDIO_LANES = 4;
 
+/** 画中画蒙版形状 */
+type OverlayMask = 'none' | 'circle' | 'roundrect';
+
 /** 画中画片段：在主视频上方叠加的小窗视频/图片（自由摆放时间与位置） */
 interface OverlayClip extends Clip {
     start: number;  // 时间轴起点（秒，自由放置）
     track: number;  // 画中画轨道（0 起）
+    mask?: OverlayMask; // 蒙版形状（缺省无）
 }
+
+const OVERLAY_MASKS: { id: OverlayMask; name: string }[] = [
+    { id: 'none', name: '无' },
+    { id: 'circle', name: '圆形' },
+    { id: 'roundrect', name: '圆角' },
+];
+
+/** 蒙版对应的 CSS clip-path / 圆角（预览用） */
+const maskClipStyle = (mask?: OverlayMask): React.CSSProperties => {
+    if (mask === 'circle') return { clipPath: 'ellipse(50% 50% at 50% 50%)' };
+    if (mask === 'roundrect') return { borderRadius: '10%', overflow: 'hidden' };
+    return {};
+};
 
 const oTrack = (o: OverlayClip) => Math.max(0, o.track ?? 0);
 const MAX_OVERLAY_LANES = 2;
@@ -1337,16 +1354,16 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         currentClipIdxRef.current = -1;
     };
 
-    /** 从素材库添加画中画：放到播放头处的空闲画中画轨，默认 40% 宽、右上角 */
-    const addOverlayFromLibrary = (v: LibraryAsset) => {
-        const t = playheadRef.current;
+    /** 从素材库添加画中画：默认放到播放头处的空闲画中画轨（40% 宽、右上角）；可指定落点时间与轨道（拖拽放置） */
+    const addOverlayFromLibrary = (v: LibraryAsset, at?: { start: number; track: number }) => {
+        const t = at ? Math.max(0, at.start) : playheadRef.current;
         const make = (sourceDuration: number, outPoint: number, isImage: boolean) => {
             const base = buildClip(v, sourceDuration, outPoint, isImage);
             const item: OverlayClip = {
                 ...base,
                 scale: 0.4, posX: 0.28, posY: -0.26,
                 start: t,
-                track: findFreeOverlayLane(t, t + outPoint),
+                track: at ? Math.min(MAX_OVERLAY_LANES - 1, Math.max(0, at.track)) : findFreeOverlayLane(t, t + outPoint),
             };
             setOverlays(prev => [...prev, item]);
             setSelected({ kind: 'overlay', id: item.id });
@@ -2237,6 +2254,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         url: o.url, start: o.start, inPoint: o.inPoint, outPoint: o.outPoint,
                         speed: o.speed, muted: o.muted || videoTrackMuted, volume: o.volume,
                         scale: o.scale, posX: o.posX, posY: o.posY, isImage: !!o.isImage,
+                        mask: o.mask || 'none',
                     })),
                     videoTrackMuted,
                     audioTrackMuted,
@@ -2466,6 +2484,11 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                 key={`${v.assetType}_${v.id}`}
                                 className={`group relative w-[calc(50%-4px)] flex-shrink-0 rounded-lg overflow-hidden bg-neutral-900 border cursor-pointer ${libSelectMode && checked ? 'border-cyan-500 ring-1 ring-cyan-500/60' : 'border-neutral-800 hover:border-cyan-600'}`}
                                 onClick={() => libSelectMode ? toggleLibSelect(v) : addClipFromLibrary(v)}
+                                draggable={!libSelectMode}
+                                onDragStart={e => {
+                                    e.dataTransfer.setData('application/x-library-asset', JSON.stringify(v));
+                                    e.dataTransfer.effectAllowed = 'copy';
+                                }}
                                 title={[v.title, v.prompt].filter(Boolean).join('\n')}
                             >
                                 {v.assetType === 'image' ? (
@@ -2608,7 +2631,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                             onPointerDown={e => { if (inRange) onOverlayPointerDown(e, o); }}
                                             onPointerMove={onOverlayPointerMove}
                                             onPointerUp={onOverlayPointerUp}
-                                            className={`absolute cursor-grab active:cursor-grabbing ${isSel ? 'ring-2 ring-cyan-400/90 rounded-sm' : ''}`}
+                                            className="absolute cursor-grab active:cursor-grabbing"
                                             style={{
                                                 left: `${(0.5 + o.posX) * 100}%`,
                                                 top: `${(0.5 + o.posY) * 100}%`,
@@ -2616,24 +2639,29 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                                 width: `${Math.min(1.5, Math.max(0.1, o.scale)) * 100}%`,
                                                 display: inRange ? 'block' : 'none',
                                                 zIndex: 5 + oTrack(o),
+                                                // 选中时用虚线外框提示（仅编辑指示，不属于画面内容；播放中隐藏）
+                                                outline: isSel && !playing ? '1px dashed rgba(34,211,238,0.75)' : 'none',
+                                                outlineOffset: 3,
                                             }}
                                             title={`画中画：${o.name}（拖拽调整位置）`}
                                         >
-                                            {o.isImage ? (
-                                                <img
-                                                    src={o.url.startsWith('http') ? o.url : `${o.url}`}
-                                                    className="block w-full pointer-events-none"
-                                                    draggable={false}
-                                                />
-                                            ) : (
-                                                <video
-                                                    ref={el => { if (el) overlayElsRef.current.set(o.id, el); else overlayElsRef.current.delete(o.id); }}
-                                                    src={o.url.startsWith('http') ? o.url : `${o.url}`}
-                                                    className="block w-full pointer-events-none"
-                                                    playsInline
-                                                    preload="auto"
-                                                />
-                                            )}
+                                            <div className="w-full" style={maskClipStyle(o.mask)}>
+                                                {o.isImage ? (
+                                                    <img
+                                                        src={o.url.startsWith('http') ? o.url : `${o.url}`}
+                                                        className="block w-full pointer-events-none"
+                                                        draggable={false}
+                                                    />
+                                                ) : (
+                                                    <video
+                                                        ref={el => { if (el) overlayElsRef.current.set(o.id, el); else overlayElsRef.current.delete(o.id); }}
+                                                        src={o.url.startsWith('http') ? o.url : `${o.url}`}
+                                                        className="block w-full pointer-events-none"
+                                                        playsInline
+                                                        preload="auto"
+                                                    />
+                                                )}
+                                            </div>
                                         </div>
                                     );
                                 })}
@@ -2819,6 +2847,20 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                 </label>
                             </div>
                             <div className="text-[10px] text-neutral-600">在预览画面上可直接拖拽画中画调整位置</div>
+                            <label className="block text-[11px] text-neutral-400">
+                                蒙版
+                                <div className="flex gap-1 mt-1">
+                                    {OVERLAY_MASKS.map(m => (
+                                        <button
+                                            key={m.id}
+                                            onClick={() => patchOverlay(selOverlay.id, { mask: m.id })}
+                                            className={`flex-1 text-[10px] py-1 rounded border ${(selOverlay.mask || 'none') === m.id ? 'bg-amber-600/40 border-amber-500 text-amber-200' : 'bg-neutral-900 border-neutral-700 text-neutral-500 hover:border-neutral-500'}`}
+                                        >
+                                            {m.name}
+                                        </button>
+                                    ))}
+                                </div>
+                            </label>
                             {!selOverlay.isImage && (
                                 <>
                                     <div className="flex items-center gap-2">
@@ -3701,9 +3743,30 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                             </div>
                         </div>
 
-                        {/* 画中画轨（自由放置，可上下拖动换轨、拖边缘裁剪） */}
+                        {/* 画中画轨（自由放置，可上下拖动换轨、拖边缘裁剪；素材卡可直接拖进来） */}
                         {Array.from({ length: overlayLanes }).map((_, L) => (
-                        <div key={`ovlane${L}`} className="h-14 relative border-b border-neutral-900">
+                        <div
+                            key={`ovlane${L}`}
+                            className="h-14 relative border-b border-neutral-900"
+                            onDragOver={e => {
+                                if (e.dataTransfer.types.includes('application/x-library-asset')) {
+                                    e.preventDefault();
+                                    e.dataTransfer.dropEffect = 'copy';
+                                }
+                            }}
+                            onDrop={e => {
+                                const raw = e.dataTransfer.getData('application/x-library-asset');
+                                if (!raw) return;
+                                e.preventDefault();
+                                e.stopPropagation();
+                                try {
+                                    const asset = JSON.parse(raw) as LibraryAsset;
+                                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                    const start = Math.max(0, (e.clientX - rect.left) / pxPerSec);
+                                    addOverlayFromLibrary(asset, { start, track: L });
+                                } catch { /* 非法拖拽数据，忽略 */ }
+                            }}
+                        >
                             {overlays.filter(o => oTrack(o) === L).map(o => {
                                 const isSel = (selected?.kind === 'overlay' && selected.id === o.id) || multiSel.has(`overlay:${o.id}`);
                                 return (
