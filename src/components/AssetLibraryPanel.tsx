@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Trash2, Upload, Loader2, Plus } from 'lucide-react';
-import { showAppAlert } from './ui/AppDialog';
+import { X, Trash2, Upload, Loader2, Plus, Check } from 'lucide-react';
+import { showAppAlert, showAppConfirm } from './ui/AppDialog';
 
 interface LibraryAsset {
     id: string;
@@ -159,6 +159,21 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
         }
     };
 
+    /** 批量删除素材 */
+    const handleDeleteMany = async (ids: string[]) => {
+        let failed = 0;
+        for (const id of ids) {
+            try {
+                const res = await fetch(`http://localhost:3501/api/library/${id}`, { method: 'DELETE' });
+                if (!res.ok) failed++;
+            } catch (_) {
+                failed++;
+            }
+        }
+        if (failed > 0) showAppAlert(`${failed} 个素材删除失败`);
+        await fetchLibrary();
+    };
+
     if (!isOpen) return null;
 
     // Theme helper
@@ -186,6 +201,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                         loading={loading}
                         onSelectAsset={onSelectAsset}
                         onDeleteAsset={handleDeleteAsset}
+                        onDeleteMany={handleDeleteMany}
                         variant={variant}
                         canvasTheme={canvasTheme}
                         importing={importing}
@@ -214,6 +230,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                 loading={loading}
                 onSelectAsset={onSelectAsset}
                 onDeleteAsset={handleDeleteAsset}
+                onDeleteMany={handleDeleteMany}
                 variant={variant}
                 canvasTheme={canvasTheme}
                 importing={importing}
@@ -229,13 +246,17 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
 // Extracted Internal Component for reuse
 const AssetLibraryContent = ({
     selectedCategory, setSelectedCategory,
-    assets, loading, onSelectAsset, onDeleteAsset, variant, canvasTheme = 'dark',
+    assets, loading, onSelectAsset, onDeleteAsset, onDeleteMany, variant, canvasTheme = 'dark',
     importing, onImportClick,
     categories = DEFAULT_CATEGORIES, onAddCategory, onDeleteCategory
 }: any) => {
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
     const [addingCategory, setAddingCategory] = useState(false);
     const [newCategoryName, setNewCategoryName] = useState('');
+    // 批量删除模式：点击素材为勾选而非选用
+    const [manageMode, setManageMode] = useState(false);
+    const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+    const [batchDeleting, setBatchDeleting] = useState(false);
     const isDark = canvasTheme === 'dark';
 
     const allCategories: string[] = ['All', ...categories];
@@ -245,6 +266,29 @@ const AssetLibraryContent = ({
         setAddingCategory(false);
         setNewCategoryName('');
         if (name) onAddCategory?.(name);
+    };
+
+    const toggleChecked = (id: string) => {
+        setCheckedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    };
+
+    const exitManageMode = () => {
+        setManageMode(false);
+        setCheckedIds(new Set());
+    };
+
+    const handleBatchDelete = async () => {
+        if (checkedIds.size === 0) return;
+        const ok = await showAppConfirm(`确定删除选中的 ${checkedIds.size} 个素材吗？此操作不可恢复。`, { danger: true, confirmText: '删除' });
+        if (!ok) return;
+        setBatchDeleting(true);
+        await onDeleteMany?.(Array.from(checkedIds));
+        setBatchDeleting(false);
+        exitManageMode();
     };
 
     const filteredAssets = assets.filter((asset: any) =>
@@ -274,7 +318,7 @@ const AssetLibraryContent = ({
                 <div className="flex items-center gap-2 shrink-0">
                     <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide flex-1 min-w-0 items-center">
                         {allCategories.map(cat => (
-                            <div key={cat} className="relative group/cat shrink-0">
+                            <div key={cat} className="relative group/cat shrink-0 hover:z-20">
                                 <button
                                     onClick={() => setSelectedCategory(cat)}
                                     className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${selectedCategory === cat
@@ -287,7 +331,7 @@ const AssetLibraryContent = ({
                                 {cat !== 'All' && (
                                     <button
                                         onClick={(e) => { e.stopPropagation(); onDeleteCategory?.(cat); }}
-                                        className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 text-white items-center justify-center hidden group-hover/cat:flex hover:bg-red-600"
+                                        className="absolute -top-1 -right-1 z-30 w-3.5 h-3.5 rounded-full bg-red-500 text-white items-center justify-center hidden group-hover/cat:flex hover:bg-red-600"
                                         title="删除该分类（素材自动归入剩余分类）"
                                     >
                                         <X size={9} />
@@ -315,15 +359,53 @@ const AssetLibraryContent = ({
                             </button>
                         )}
                     </div>
-                    <button
-                        onClick={onImportClick}
-                        disabled={importing}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 mb-2 rounded-full text-xs font-medium whitespace-nowrap border transition-colors disabled:opacity-50 ${isDark ? 'bg-neutral-800 hover:bg-neutral-700 text-white border-neutral-700' : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-900 border-neutral-300'}`}
-                        title="导入本地视频/图片到当前分类（可多选）"
-                    >
-                        {importing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-                        导入
-                    </button>
+                    {manageMode ? (
+                        <div className="flex items-center gap-1.5 mb-2 shrink-0">
+                            <button
+                                onClick={() => {
+                                    const allIds = filteredAssets.map((a: any) => a.id);
+                                    setCheckedIds(prev => prev.size >= allIds.length ? new Set() : new Set(allIds));
+                                }}
+                                className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border transition-colors ${isDark ? 'bg-neutral-800 hover:bg-neutral-700 text-white border-neutral-700' : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-900 border-neutral-300'}`}
+                            >
+                                {checkedIds.size >= filteredAssets.length && filteredAssets.length > 0 ? '取消全选' : '全选'}
+                            </button>
+                            <button
+                                onClick={handleBatchDelete}
+                                disabled={checkedIds.size === 0 || batchDeleting}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border border-red-700 bg-red-600/20 text-red-300 hover:bg-red-600/40 transition-colors disabled:opacity-40"
+                            >
+                                {batchDeleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                                删除{checkedIds.size > 0 ? ` ${checkedIds.size}` : ''}
+                            </button>
+                            <button
+                                onClick={exitManageMode}
+                                className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border transition-colors ${isDark ? 'bg-neutral-900 text-neutral-400 border-neutral-700 hover:text-white' : 'bg-white text-neutral-500 border-neutral-300 hover:text-neutral-900'}`}
+                            >
+                                取消
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-1.5 mb-2 shrink-0">
+                            <button
+                                onClick={() => setManageMode(true)}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border transition-colors ${isDark ? 'bg-neutral-800 hover:bg-neutral-700 text-white border-neutral-700' : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-900 border-neutral-300'}`}
+                                title="进入多选模式，批量删除素材"
+                            >
+                                <Trash2 size={13} />
+                                批量删除
+                            </button>
+                            <button
+                                onClick={onImportClick}
+                                disabled={importing}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border transition-colors disabled:opacity-50 ${isDark ? 'bg-neutral-800 hover:bg-neutral-700 text-white border-neutral-700' : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-900 border-neutral-300'}`}
+                                title="导入本地视频/图片到当前分类（可多选）"
+                            >
+                                {importing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                                导入
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Content */}
@@ -344,9 +426,15 @@ const AssetLibraryContent = ({
                         filteredAssets.map((asset: any) => (
                             <div
                                 key={asset.id}
-                                className="group relative aspect-square bg-neutral-900 rounded-lg overflow-hidden border border-neutral-800 hover:border-neutral-600 cursor-pointer"
-                                onClick={() => onSelectAsset(asset.url, asset.type)}
+                                className={`group relative aspect-square bg-neutral-900 rounded-lg overflow-hidden border cursor-pointer ${manageMode && checkedIds.has(asset.id) ? 'border-red-500 ring-1 ring-red-500' : 'border-neutral-800 hover:border-neutral-600'}`}
+                                onClick={() => manageMode ? toggleChecked(asset.id) : onSelectAsset(asset.url, asset.type)}
                             >
+                                {/* 多选模式：左上角勾选框 */}
+                                {manageMode && (
+                                    <div className={`absolute top-1 left-1 z-20 w-5 h-5 rounded border flex items-center justify-center ${checkedIds.has(asset.id) ? 'bg-red-500 border-red-500 text-white' : 'bg-black/50 border-neutral-400'}`}>
+                                        {checkedIds.has(asset.id) && <Check size={13} />}
+                                    </div>
+                                )}
                                 <img
                                     src={asset.url}
                                     alt={asset.name}
@@ -362,8 +450,8 @@ const AssetLibraryContent = ({
                                     <span className="text-white text-xs font-medium truncate">{asset.name}</span>
                                 </div>
 
-                                {/* Delete Button or Confirmation */}
-                                {deleteConfirmId === asset.id ? (
+                                {/* Delete Button or Confirmation（多选模式下隐藏单删） */}
+                                {manageMode ? null : deleteConfirmId === asset.id ? (
                                     <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center gap-2 z-20 animate-in fade-in duration-200" onClick={(e) => e.stopPropagation()}>
                                         <span className="text-white text-xs font-medium">删除？</span>
                                         <div className="flex gap-2">
