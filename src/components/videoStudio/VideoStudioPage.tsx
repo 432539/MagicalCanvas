@@ -605,10 +605,20 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
     const [videoBoxW, setVideoBoxW] = useState(640); // 预览视频实际显示宽度（字幕最大宽度按比例换算）
     const previewAreaRef = useRef<HTMLDivElement>(null);
     const [previewSize, setPreviewSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 }); // 预览区可用尺寸
-
     // 最大化播放：把「预览 + 播放控制条」整列全屏（含贴纸/字幕叠加层），Esc 或再点一次退出
     const previewColRef = useRef<HTMLDivElement>(null);
     const [isFullscreen, setIsFullscreen] = useState(false);
+    // 项目画幅宽高比（预览框按它定尺寸，小素材也放大填满，与导出表现一致）
+    const projAspect = useMemo(() => {
+        const [rw, rh] = resolution.split('x').map(Number);
+        return (rw / rh) || (16 / 9);
+    }, [resolution]);
+    // 预览显示框：在预览区内按项目画幅取最大尺寸（适当留白）
+    const previewBox = useMemo(() => {
+        if (previewSize.w <= 0 || previewSize.h <= 0) return null;
+        const fw = Math.min(previewSize.w * (isFullscreen ? 0.98 : 0.96), previewSize.h * (isFullscreen ? 0.97 : 0.92) * projAspect);
+        return { w: Math.round(fw), h: Math.round(fw / projAspect) };
+    }, [previewSize, projAspect, isFullscreen]);
     useEffect(() => {
         const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
         document.addEventListener('fullscreenchange', onFsChange);
@@ -2495,14 +2505,14 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                     <img
                                         src={v.url.startsWith('http') ? v.url : `${v.url}`}
                                         loading="lazy"
-                                        className="w-full h-14 object-cover pointer-events-none"
+                                        className="w-full aspect-video object-cover pointer-events-none"
                                     />
                                 ) : (
                                     <video
                                         src={(v.url.startsWith('http') ? v.url : `${v.url}`) + '#t=0.5'}
                                         preload="metadata"
                                         muted
-                                        className="w-full h-14 object-cover pointer-events-none"
+                                        className="w-full aspect-video object-cover pointer-events-none"
                                     />
                                 )}
                                 <span className={`absolute top-1 left-1 text-[8px] px-1 rounded ${v.assetType === 'image' ? 'bg-emerald-700/80 text-emerald-100' : 'bg-sky-700/80 text-sky-100'}`}>
@@ -2565,7 +2575,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                     className="flex flex-col flex-shrink-0 min-w-0 bg-[#0a0a0b]"
                     style={{
                         width: previewSize.h > 0
-                            ? `clamp(340px, ${Math.round(previewSize.h * (() => { const [rw, rh] = resolution.split('x').map(Number); return (rw / rh) || (16 / 9); })()) + 16}px, 58%)`
+                            ? `clamp(340px, ${Math.round(previewSize.h * 0.92 * projAspect) + 16}px, 58%)`
                             : '50%',
                     }}
                 >
@@ -2584,9 +2594,8 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                     className="block"
                                     playsInline
                                     style={{
-                                        // 像素级约束 + 适当留白（预览不要顶满）
-                                        maxWidth: previewSize.w > 0 ? Math.round(previewSize.w * (isFullscreen ? 0.98 : 0.82)) : '100%',
-                                        maxHeight: previewSize.h > 0 ? Math.round(previewSize.h * (isFullscreen ? 0.97 : 0.92)) : '100%',
+                                        // 显示框固定为项目画幅：小素材放大、比例不同 letterbox，与导出一致
+                                        ...(previewBox ? { width: previewBox.w, height: previewBox.h, objectFit: 'contain' as const } : { maxWidth: '100%', maxHeight: '100%' }),
                                         display: curClip?.isImage ? 'none' : 'block',
                                         ...(curClip && !curClip.isImage ? {
                                             filter: `brightness(${(1 + curClip.eq.brightness).toFixed(2)}) contrast(${curClip.eq.contrast.toFixed(2)}) saturate(${curClip.eq.saturation.toFixed(2)})${curFx?.css ? ' ' + curFx.css : ''}`,
@@ -2601,8 +2610,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                         src={curClip.url.startsWith('http') ? curClip.url : `${curClip.url}`}
                                         className="block"
                                         style={{
-                                            maxWidth: previewSize.w > 0 ? Math.round(previewSize.w * (isFullscreen ? 0.98 : 0.82)) : '100%',
-                                            maxHeight: previewSize.h > 0 ? Math.round(previewSize.h * (isFullscreen ? 0.97 : 0.92)) : '100%',
+                                            ...(previewBox ? { width: previewBox.w, height: previewBox.h, objectFit: 'contain' as const } : { maxWidth: '100%', maxHeight: '100%' }),
                                             filter: `brightness(${(1 + curClip.eq.brightness).toFixed(2)}) contrast(${curClip.eq.contrast.toFixed(2)}) saturate(${curClip.eq.saturation.toFixed(2)})${curFx?.css ? ' ' + curFx.css : ''}`,
                                             transform: `translate(${(curClip.posX * 100).toFixed(1)}%, ${(curClip.posY * 100).toFixed(1)}%) rotate(${curClip.rotate}deg) scaleX(${curClip.flipH ? -curClip.scale : curClip.scale}) scaleY(${curClip.flipV ? -curClip.scale : curClip.scale})`,
                                         }}
