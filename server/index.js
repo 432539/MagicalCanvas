@@ -379,57 +379,68 @@ app.post('/api/library', async (req, res) => {
     }
 });
 
-// ---- 素材分类管理（categories.json，内置分类不可删除） ----
-const BUILTIN_CATEGORIES = ['Character', 'Scene', 'Item', 'Style', 'Sound Effect', 'Others'];
+// ---- 素材分类管理（categories.json 持久化完整分类列表，全部可增删） ----
+const DEFAULT_CATEGORIES = ['Character', 'Scene', 'Item', 'Style', 'Sound Effect', 'Others'];
 const categoriesJsonPath = () => path.join(LIBRARY_ASSETS_DIR, 'categories.json');
 
 function loadCategories() {
-    let custom = [];
     try {
         if (fs.existsSync(categoriesJsonPath())) {
             const parsed = JSON.parse(fs.readFileSync(categoriesJsonPath(), 'utf8'));
-            if (Array.isArray(parsed)) custom = parsed.filter(c => typeof c === 'string' && c.trim());
+            // 旧格式：数组里只存自定义分类 → 与默认分类合并迁移
+            if (Array.isArray(parsed)) {
+                return [...DEFAULT_CATEGORIES, ...parsed.filter(c => typeof c === 'string' && c.trim() && !DEFAULT_CATEGORIES.includes(c))];
+            }
+            if (parsed && Array.isArray(parsed.all)) {
+                const list = parsed.all.filter(c => typeof c === 'string' && c.trim());
+                if (list.length > 0) return list;
+            }
         }
-    } catch (_) { /* 损坏时按无自定义分类处理 */ }
-    return { builtin: BUILTIN_CATEGORIES, custom };
+    } catch (_) { /* 损坏时回退默认分类 */ }
+    return [...DEFAULT_CATEGORIES];
+}
+
+function saveCategories(list) {
+    fs.writeFileSync(categoriesJsonPath(), JSON.stringify({ all: list }, null, 2));
 }
 
 app.get('/api/library/categories', (req, res) => {
-    res.json(loadCategories());
+    res.json({ categories: loadCategories() });
 });
 
 app.post('/api/library/categories', (req, res) => {
     const name = String(req.body?.name || '').trim().slice(0, 30);
     if (!name) return res.status(400).json({ error: '分类名称不能为空' });
-    const { builtin, custom } = loadCategories();
-    if (name === 'All' || builtin.includes(name) || custom.includes(name)) {
+    const categories = loadCategories();
+    if (name === 'All' || categories.includes(name)) {
         return res.status(409).json({ error: '该分类已存在' });
     }
-    custom.push(name);
-    fs.writeFileSync(categoriesJsonPath(), JSON.stringify(custom, null, 2));
-    res.json({ builtin, custom });
+    categories.push(name);
+    saveCategories(categories);
+    res.json({ categories });
 });
 
 app.delete('/api/library/categories/:name', (req, res) => {
     const name = decodeURIComponent(req.params.name);
-    const { builtin, custom } = loadCategories();
-    if (builtin.includes(name)) return res.status(400).json({ error: '内置分类不可删除' });
-    if (!custom.includes(name)) return res.status(404).json({ error: '分类不存在' });
-    const next = custom.filter(c => c !== name);
-    fs.writeFileSync(categoriesJsonPath(), JSON.stringify(next, null, 2));
-    // 该分类下的素材归入 Others（文件不动，仅改归属）
+    const categories = loadCategories();
+    if (!categories.includes(name)) return res.status(404).json({ error: '分类不存在' });
+    if (categories.length <= 1) return res.status(400).json({ error: '至少保留一个分类' });
+    const next = categories.filter(c => c !== name);
+    saveCategories(next);
+    // 该分类下的素材改挂到剩余分类（优先 Others），文件不动
+    const fallback = next.includes('Others') ? 'Others' : next[next.length - 1];
     const libraryJsonPath = path.join(LIBRARY_ASSETS_DIR, 'assets.json');
     if (fs.existsSync(libraryJsonPath)) {
         try {
             const data = JSON.parse(fs.readFileSync(libraryJsonPath, 'utf8'));
             let changed = false;
             for (const a of data) {
-                if (a.category === name) { a.category = 'Others'; changed = true; }
+                if (a.category === name) { a.category = fallback; changed = true; }
             }
             if (changed) fs.writeFileSync(libraryJsonPath, JSON.stringify(data, null, 2));
         } catch (_) { /* assets.json 损坏时跳过迁移 */ }
     }
-    res.json({ builtin, custom: next });
+    res.json({ categories: next });
 });
 
 // List library assets

@@ -19,7 +19,7 @@ interface AssetLibraryPanelProps {
     canvasTheme?: 'dark' | 'light';
 }
 
-const BUILTIN_CATEGORIES = [
+const DEFAULT_CATEGORIES = [
     'Character',
     'Scene',
     'Item',
@@ -38,7 +38,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
 }) => {
     const [selectedCategory, setSelectedCategory] = useState('All');
     const [assets, setAssets] = useState<LibraryAsset[]>([]);
-    const [customCategories, setCustomCategories] = useState<string[]>([]);
+    const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
@@ -67,7 +67,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
             const res = await fetch('http://localhost:3501/api/library/categories');
             if (res.ok) {
                 const data = await res.json();
-                setCustomCategories(Array.isArray(data.custom) ? data.custom : []);
+                if (Array.isArray(data.categories)) setCategories(data.categories);
             }
         } catch (error) {
             console.error('Failed to load categories:', error);
@@ -85,7 +85,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
             showAppAlert(data.error || '添加分类失败');
             return;
         }
-        setCustomCategories(data.custom);
+        setCategories(data.categories);
         setSelectedCategory(name);
     };
 
@@ -96,9 +96,9 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
             showAppAlert(data.error || '删除分类失败');
             return;
         }
-        setCustomCategories(data.custom);
+        setCategories(data.categories);
         if (selectedCategory === name) setSelectedCategory('All');
-        await fetchLibrary(); // 该分类下素材已归入 Others
+        await fetchLibrary(); // 该分类下素材已自动改挂到剩余分类
     };
 
     // 导入本地视频/图片到素材库（归入当前分类，「All」时归入 Others）
@@ -110,7 +110,9 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
         if (files.length === 0) return;
         setImporting(true);
         let failed = 0;
-        const category = selectedCategory === 'All' ? 'Others' : selectedCategory;
+        const category = selectedCategory === 'All'
+            ? (categories.includes('Others') ? 'Others' : categories[0] || 'Others')
+            : selectedCategory;
         for (const file of files) {
             try {
                 const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -188,7 +190,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                         canvasTheme={canvasTheme}
                         importing={importing}
                         onImportClick={() => importInputRef.current?.click()}
-                        customCategories={customCategories}
+                        categories={categories}
                         onAddCategory={handleAddCategory}
                         onDeleteCategory={handleDeleteCategory}
                     />
@@ -216,7 +218,7 @@ export const AssetLibraryPanel: React.FC<AssetLibraryPanelProps> = ({
                 canvasTheme={canvasTheme}
                 importing={importing}
                 onImportClick={() => importInputRef.current?.click()}
-                customCategories={customCategories}
+                categories={categories}
                 onAddCategory={handleAddCategory}
                 onDeleteCategory={handleDeleteCategory}
             />
@@ -229,14 +231,14 @@ const AssetLibraryContent = ({
     selectedCategory, setSelectedCategory,
     assets, loading, onSelectAsset, onDeleteAsset, variant, canvasTheme = 'dark',
     importing, onImportClick,
-    customCategories = [], onAddCategory, onDeleteCategory
+    categories = DEFAULT_CATEGORIES, onAddCategory, onDeleteCategory
 }: any) => {
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
     const [addingCategory, setAddingCategory] = useState(false);
     const [newCategoryName, setNewCategoryName] = useState('');
     const isDark = canvasTheme === 'dark';
 
-    const allCategories: string[] = ['All', ...BUILTIN_CATEGORIES, ...customCategories];
+    const allCategories: string[] = ['All', ...categories];
 
     const submitNewCategory = () => {
         const name = newCategoryName.trim();
@@ -271,31 +273,28 @@ const AssetLibraryContent = ({
                 {/* Filters + 导入 */}
                 <div className="flex items-center gap-2 shrink-0">
                     <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide flex-1 min-w-0 items-center">
-                        {allCategories.map(cat => {
-                            const isCustom = customCategories.includes(cat);
-                            return (
-                                <div key={cat} className="relative group/cat shrink-0">
+                        {allCategories.map(cat => (
+                            <div key={cat} className="relative group/cat shrink-0">
+                                <button
+                                    onClick={() => setSelectedCategory(cat)}
+                                    className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${selectedCategory === cat
+                                        ? isDark ? 'bg-neutral-100 text-black border-white' : 'bg-neutral-900 text-white border-neutral-900'
+                                        : isDark ? 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:border-neutral-600' : 'bg-white text-neutral-600 border-neutral-200 hover:border-neutral-300'
+                                        }`}
+                                >
+                                    {cat}
+                                </button>
+                                {cat !== 'All' && (
                                     <button
-                                        onClick={() => setSelectedCategory(cat)}
-                                        className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${selectedCategory === cat
-                                            ? isDark ? 'bg-neutral-100 text-black border-white' : 'bg-neutral-900 text-white border-neutral-900'
-                                            : isDark ? 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:border-neutral-600' : 'bg-white text-neutral-600 border-neutral-200 hover:border-neutral-300'
-                                            }`}
+                                        onClick={(e) => { e.stopPropagation(); onDeleteCategory?.(cat); }}
+                                        className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 text-white items-center justify-center hidden group-hover/cat:flex hover:bg-red-600"
+                                        title="删除该分类（素材自动归入剩余分类）"
                                     >
-                                        {cat}
+                                        <X size={9} />
                                     </button>
-                                    {isCustom && (
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); onDeleteCategory?.(cat); }}
-                                            className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 text-white items-center justify-center hidden group-hover/cat:flex hover:bg-red-600"
-                                            title="删除该分类（素材将归入 Others）"
-                                        >
-                                            <X size={9} />
-                                        </button>
-                                    )}
-                                </div>
-                            );
-                        })}
+                                )}
+                            </div>
+                        ))}
                         {addingCategory ? (
                             <input
                                 autoFocus

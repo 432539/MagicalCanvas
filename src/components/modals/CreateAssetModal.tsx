@@ -41,7 +41,10 @@ export const CreateAssetModal: React.FC<CreateAssetModalProps> = ({
             fetch('http://localhost:3501/api/library/categories')
                 .then(r => r.ok ? r.json() : null)
                 .then(data => {
-                    if (data) setCategories([...data.builtin, ...data.custom]);
+                    if (data && Array.isArray(data.categories) && data.categories.length > 0) {
+                        setCategories(data.categories);
+                        setCategory(data.categories[0]);
+                    }
                 })
                 .catch(() => { /* 加载失败时用内置分类 */ });
         }
@@ -58,7 +61,7 @@ export const CreateAssetModal: React.FC<CreateAssetModalProps> = ({
             });
             const data = await res.json();
             if (res.ok) {
-                setCategories([...data.builtin, ...data.custom]);
+                setCategories(data.categories);
                 setCategory(n);
                 setNewCatName('');
                 setIsDropdownOpen(false);
