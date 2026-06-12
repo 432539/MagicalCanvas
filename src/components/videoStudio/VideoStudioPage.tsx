@@ -2790,6 +2790,24 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                             {importingMusic ? <Loader2 size={12} className="animate-spin" /> : '🎵'} 导入音乐
                         </button>
                         <div className="flex-1" />
+                        {/* 画面比例切换（保持 720p/1080p 档位，仅换横竖屏） */}
+                        {!isFullscreen && (
+                            <div className="flex items-center rounded border border-neutral-700 overflow-hidden" title="画面比例（决定预览和导出的画幅）">
+                                {([['16:9', false], ['9:16', true]] as [string, boolean][]).map(([label, portrait]) => {
+                                    const is1080 = resolution === '1920x1080' || resolution === '1080x1920';
+                                    const active = (projAspect < 1) === portrait;
+                                    return (
+                                        <button
+                                            key={label}
+                                            onClick={() => setResolution(portrait ? (is1080 ? '1080x1920' : '720x1280') : (is1080 ? '1920x1080' : '1280x720'))}
+                                            className={`text-[11px] px-2.5 py-1.5 ${active ? 'bg-cyan-600/30 text-cyan-300' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'}`}
+                                        >
+                                            {label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
                         <button
                             onClick={toggleFullscreen}
                             disabled={clips.length === 0}
