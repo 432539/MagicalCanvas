@@ -1512,16 +1512,16 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         setMultiSel(all);
     };
 
-    /** 框选命中计算：行高与时间轴渲染保持一致（标尺 24px + 每轨 56px + 添加音轨行 24px） */
+    /** 框选命中计算：行高与时间轴渲染保持一致（标尺 24px + 每轨 48px + 添加音轨行 24px） */
     const computeMarqueeSelection = (x: number, y: number, w: number, h: number) => {
         const sel = new Set<string>();
         const xs = x, xe = x + w, ys = y, ye = y + h;
         const hitRow = (top: number, bottom: number) => ye > top && ys < bottom;
-        const overlayTop = 80;                                   // 标尺 24 + 视频轨 56
-        const audioTop = overlayTop + overlayLanes * 56;         // 画中画轨 N 条
-        const subTop = audioTop + audioLanes * 56 + 24;          // 音轨 N 条 + 「添加音轨」行
-        const stickerTop = subTop + 56;
-        if (hitRow(24, 80)) {
+        const overlayTop = 72;                                   // 标尺 24 + 视频轨 48
+        const audioTop = overlayTop + overlayLanes * 48;         // 画中画轨 N 条
+        const subTop = audioTop + audioLanes * 48 + 24;          // 音轨 N 条 + 「添加音轨」行
+        const stickerTop = subTop + 48;
+        if (hitRow(24, 72)) {
             let cx = 0;
             for (const c of clips) {
                 const cw = Math.max(clipDur(c) * pxPerSec, 30);
@@ -1530,22 +1530,22 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
             }
         }
         overlays.forEach(o => {
-            const top = overlayTop + oTrack(o) * 56;
-            if (!hitRow(top, top + 56)) return;
+            const top = overlayTop + oTrack(o) * 48;
+            if (!hitRow(top, top + 48)) return;
             const l = o.start * pxPerSec, iw = Math.max(clipDur(o) * pxPerSec, 24);
             if (xe > l && xs < l + iw) sel.add(`overlay:${o.id}`);
         });
         audios.forEach(a => {
-            const top = audioTop + aTrack(a) * 56;
-            if (!hitRow(top, top + 56)) return;
+            const top = audioTop + aTrack(a) * 48;
+            if (!hitRow(top, top + 48)) return;
             const l = a.start * pxPerSec, iw = Math.max(audioDur(a) * pxPerSec, 24);
             if (xe > l && xs < l + iw) sel.add(`audio:${a.id}`);
         });
-        if (hitRow(subTop, subTop + 56)) subtitles.forEach(s => {
+        if (hitRow(subTop, subTop + 48)) subtitles.forEach(s => {
             const l = s.start * pxPerSec, iw = Math.max((s.end - s.start) * pxPerSec, 24);
             if (xe > l && xs < l + iw) sel.add(`sub:${s.id}`);
         });
-        if (hitRow(stickerTop, stickerTop + 56)) stickers.forEach(s => {
+        if (hitRow(stickerTop, stickerTop + 48)) stickers.forEach(s => {
             const l = s.start * pxPerSec, iw = Math.max((s.end - s.start) * pxPerSec, 24);
             if (xe > l && xs < l + iw) sel.add(`sticker:${s.id}`);
         });
@@ -1632,11 +1632,11 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         const newStart = Math.max(0, d.orig + delta);
         if (d.kind === 'audio') {
             // 垂直拖动跨音轨（每轨 56px）
-            const laneDelta = Math.round((e.clientY - (d.startY ?? e.clientY)) / 56);
+            const laneDelta = Math.round((e.clientY - (d.startY ?? e.clientY)) / 48);
             const newTrack = Math.min(audioLanes - 1, Math.max(0, (d.origTrack ?? 0) + laneDelta));
             setAudios(prev => prev.map(a => a.id === d.id ? { ...a, start: newStart, track: newTrack } : a));
         } else if (d.kind === 'overlay') {
-            const laneDelta = Math.round((e.clientY - (d.startY ?? e.clientY)) / 56);
+            const laneDelta = Math.round((e.clientY - (d.startY ?? e.clientY)) / 48);
             const newTrack = Math.min(overlayLanes - 1, Math.max(0, (d.origTrack ?? 0) + laneDelta));
             setOverlays(prev => prev.map(o => o.id === d.id ? { ...o, start: newStart, track: newTrack } : o));
         } else if (d.kind === 'sticker') {
@@ -3514,7 +3514,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                 {/* 轨道头（固定列，与各轨行高对齐） */}
                 <div className="w-16 flex-shrink-0 border-r border-neutral-800 bg-[#121212] flex flex-col select-none">
                     <div className="h-6 border-b border-neutral-800 flex-shrink-0" />
-                    <div className="h-14 flex-shrink-0 flex flex-col items-center justify-center gap-0.5 border-b border-neutral-900">
+                    <div className="h-12 flex-shrink-0 flex flex-col items-center justify-center gap-0.5 border-b border-neutral-900">
                         <span className="text-[10px] text-neutral-400 font-medium">视频</span>
                         <button
                             onClick={() => setVideoTrackMuted(m => !m)}
@@ -3528,7 +3528,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         const laneEmpty = !overlays.some(o => oTrack(o) === L);
                         const isLast = L === overlayLanes - 1;
                         return (
-                            <div key={`ovh${L}`} className="h-14 flex-shrink-0 flex flex-col items-center justify-center gap-0.5 border-b border-neutral-900">
+                            <div key={`ovh${L}`} className="h-12 flex-shrink-0 flex flex-col items-center justify-center gap-0.5 border-b border-neutral-900">
                                 <span className="text-[10px] text-amber-400/80 font-medium">画中画{overlayLanes > 1 ? L + 1 : ''}</span>
                                 <div className="flex items-center gap-0.5">
                                     {isLast && overlayLanes < MAX_OVERLAY_LANES && (
@@ -3557,7 +3557,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         const laneEmpty = !audios.some(a => aTrack(a) === L);
                         const isLast = L === audioLanes - 1;
                         return (
-                            <div key={L} className="h-14 flex-shrink-0 flex flex-col items-center justify-center gap-0.5 border-b border-neutral-900">
+                            <div key={L} className="h-12 flex-shrink-0 flex flex-col items-center justify-center gap-0.5 border-b border-neutral-900">
                                 <span className="text-[10px] text-neutral-400 font-medium">音轨{L + 1}</span>
                                 <div className="flex items-center gap-0.5">
                                     <button
@@ -3594,10 +3594,10 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                             ＋ 音轨
                         </button>
                     </div>
-                    <div className="h-14 flex-shrink-0 flex items-center justify-center border-b border-neutral-900">
+                    <div className="h-12 flex-shrink-0 flex items-center justify-center border-b border-neutral-900">
                         <span className="text-[10px] text-neutral-400 font-medium">字幕</span>
                     </div>
-                    <div className="h-14 flex-shrink-0 flex items-center justify-center border-b border-neutral-900">
+                    <div className="h-12 flex-shrink-0 flex items-center justify-center border-b border-neutral-900">
                         <span className="text-[10px] text-neutral-400 font-medium">贴纸</span>
                     </div>
                 </div>
@@ -3623,8 +3623,8 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         </div>
 
                         {/* 视频轨 */}
-                        <div className="h-14 relative flex items-center border-b border-neutral-900">
-                            <div className="flex h-12 items-center">
+                        <div className="h-12 relative flex items-center border-b border-neutral-900">
+                            <div className="flex h-10 items-center">
                                 {clips.map((c, i) => {
                                     const w = clipDur(c) * pxPerSec;
                                     const isSel = (selected?.kind === 'clip' && selected.id === c.id) || multiSel.has(`clip:${c.id}`);
@@ -3636,7 +3636,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                                 onPointerMove={onClipPointerMove}
                                                 onPointerUp={onClipPointerUp}
                                                 onContextMenu={e => openCtxMenu(e, { kind: 'clip', id: c.id })}
-                                                className={`h-12 rounded-md cursor-grab active:cursor-grabbing border-2 flex-shrink-0 relative ${isSel ? 'border-cyan-400' : 'border-neutral-700 hover:border-neutral-500'}`}
+                                                className={`h-10 rounded-md cursor-grab active:cursor-grabbing border-2 flex-shrink-0 relative ${isSel ? 'border-cyan-400' : 'border-neutral-700 hover:border-neutral-500'}`}
                                                 style={{
                                                     width: Math.max(w, 30),
                                                     background: 'linear-gradient(135deg, #173042, #0f1f2b)',
@@ -3747,7 +3747,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         {Array.from({ length: overlayLanes }).map((_, L) => (
                         <div
                             key={`ovlane${L}`}
-                            className="h-14 relative border-b border-neutral-900"
+                            className="h-12 relative border-b border-neutral-900"
                             onDragOver={e => {
                                 if (e.dataTransfer.types.includes('application/x-library-asset')) {
                                     e.preventDefault();
@@ -3776,7 +3776,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                         onPointerMove={onItemPointerMove}
                                         onPointerUp={onItemPointerUp}
                                         onContextMenu={e => openCtxMenu(e, { kind: 'overlay', id: o.id })}
-                                        className={`absolute top-1 h-12 rounded-md cursor-grab active:cursor-grabbing border-2 px-1.5 overflow-hidden ${isSel ? 'border-amber-400' : 'border-amber-900/80 hover:border-amber-600'}`}
+                                        className={`absolute top-1 h-10 rounded-md cursor-grab active:cursor-grabbing border-2 px-1.5 overflow-hidden ${isSel ? 'border-amber-400' : 'border-amber-900/80 hover:border-amber-600'}`}
                                         style={{
                                             left: o.start * pxPerSec,
                                             width: Math.max(clipDur(o) * pxPerSec, 24),
@@ -3811,7 +3811,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
 
                         {/* 配音轨（多音轨：人声/背景声/BGM 分轨，音频块可上下拖动换轨） */}
                         {Array.from({ length: audioLanes }).map((_, L) => (
-                        <div key={`lane${L}`} className="h-14 relative border-b border-neutral-900">
+                        <div key={`lane${L}`} className="h-12 relative border-b border-neutral-900">
                             {audios.filter(a => aTrack(a) === L).map(a => {
                                 const isSel = (selected?.kind === 'audio' && selected.id === a.id) || multiSel.has(`audio:${a.id}`);
                                 return (
@@ -3821,7 +3821,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                         onPointerMove={onItemPointerMove}
                                         onPointerUp={onItemPointerUp}
                                         onContextMenu={e => openCtxMenu(e, { kind: 'audio', id: a.id })}
-                                        className={`absolute top-1 h-12 rounded-md cursor-grab active:cursor-grabbing border-2 px-1.5 overflow-hidden ${a.isMusic ? (isSel ? 'border-green-400' : 'border-green-900 hover:border-green-600') : (isSel ? 'border-purple-400' : 'border-purple-900 hover:border-purple-600')}`}
+                                        className={`absolute top-1 h-10 rounded-md cursor-grab active:cursor-grabbing border-2 px-1.5 overflow-hidden ${a.isMusic ? (isSel ? 'border-green-400' : 'border-green-900 hover:border-green-600') : (isSel ? 'border-purple-400' : 'border-purple-900 hover:border-purple-600')}`}
                                         style={{
                                             left: a.start * pxPerSec,
                                             width: Math.max(audioDur(a) * pxPerSec, 24),
@@ -3858,7 +3858,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         <div className="h-6 border-b border-neutral-900" />
 
                         {/* 字幕轨 */}
-                        <div className="h-14 relative border-b border-neutral-900">
+                        <div className="h-12 relative border-b border-neutral-900">
                             {subtitles.map(s => {
                                 const isSel = (selected?.kind === 'sub' && selected.id === s.id) || multiSel.has(`sub:${s.id}`);
                                 return (
@@ -3868,7 +3868,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                         onPointerMove={onItemPointerMove}
                                         onPointerUp={onItemPointerUp}
                                         onContextMenu={e => openCtxMenu(e, { kind: 'sub', id: s.id })}
-                                        className={`absolute top-1 h-12 rounded-md cursor-grab active:cursor-grabbing border-2 px-1.5 overflow-hidden ${isSel ? 'border-yellow-400' : 'border-yellow-900/80 hover:border-yellow-600'}`}
+                                        className={`absolute top-1 h-10 rounded-md cursor-grab active:cursor-grabbing border-2 px-1.5 overflow-hidden ${isSel ? 'border-yellow-400' : 'border-yellow-900/80 hover:border-yellow-600'}`}
                                         style={{
                                             left: s.start * pxPerSec,
                                             width: Math.max((s.end - s.start) * pxPerSec, 24),
@@ -3895,7 +3895,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         </div>
 
                         {/* 贴纸轨（恒显） */}
-                        <div className="h-14 relative border-b border-neutral-900">
+                        <div className="h-12 relative border-b border-neutral-900">
                             {stickers.map(s => {
                                 const isSel = (selected?.kind === 'sticker' && selected.id === s.id) || multiSel.has(`sticker:${s.id}`);
                                 return (
@@ -3905,7 +3905,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                         onPointerMove={onItemPointerMove}
                                         onPointerUp={onItemPointerUp}
                                         onContextMenu={e => openCtxMenu(e, { kind: 'sticker', id: s.id })}
-                                        className={`absolute top-1 h-12 rounded-md cursor-grab active:cursor-grabbing border-2 px-1.5 overflow-hidden ${isSel ? 'border-cyan-400' : 'border-cyan-900/80 hover:border-cyan-600'}`}
+                                        className={`absolute top-1 h-10 rounded-md cursor-grab active:cursor-grabbing border-2 px-1.5 overflow-hidden ${isSel ? 'border-cyan-400' : 'border-cyan-900/80 hover:border-cyan-600'}`}
                                         style={{
                                             left: s.start * pxPerSec,
                                             width: Math.max((s.end - s.start) * pxPerSec, 24),
