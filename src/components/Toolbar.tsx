@@ -4,7 +4,7 @@ import {
   Image as ImageIcon,
   MessageSquare,
   History,
-  Wrench,
+  Sparkles,
   MoreHorizontal,
   Plus,
   Film,
@@ -121,9 +121,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               }
               setIsToolsOpen(!isToolsOpen);
             }}
-            title="工具"
+            title="AI"
           >
-            <Wrench size={20} />
+            <Sparkles size={20} />
           </button>
 
           {/* Dropdown Menu */}
