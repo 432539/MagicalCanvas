@@ -76,6 +76,8 @@ interface SubtitleStyle {
     x: number;                // 位置 x：0~1 画面比例（0.5 = 水平居中）
     y: number;                // 位置 y：0~1 画面比例（0.92 = 底部）
     maxW?: number;            // 最大宽度：0.3~1 画面宽度比例，超出自动换行（默认 0.9）
+    bgOpacity?: number;       // 背景气泡不透明度 0~1（默认 0.85）
+    anim?: 'none' | 'fade' | 'slideup' | 'pop'; // 入场动画
 }
 
 interface SubtitleItem {
@@ -246,7 +248,16 @@ const DEFAULT_SUB_STYLE: SubtitleStyle = {
     x: 0.5,
     y: 0.92,
     maxW: 0.9,
+    bgOpacity: 0.85,
+    anim: 'none',
 };
+
+const SUB_ANIMS: { id: NonNullable<SubtitleStyle['anim']>; name: string }[] = [
+    { id: 'none', name: '无' },
+    { id: 'fade', name: '淡入' },
+    { id: 'slideup', name: '上滑' },
+    { id: 'pop', name: '弹入' },
+];
 
 // 8 种经典预设样式（参考剪映热门花字）
 const SUB_PRESETS: { name: string; patch: Partial<SubtitleStyle>; chipStyle: React.CSSProperties }[] = [
@@ -1704,7 +1715,8 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
             // 单条字幕最大字数：按导出分辨率、字号与最大宽度估算一行能放下的字数（竖屏自动更短）
             const r = RESOLUTIONS.find(x => x.id === resolution) || RESOLUTIONS[0];
             const fontPx = Math.max(12, (defaultStyle.fontScale || 0.052) * r.h);
-            const maxLen = Math.max(6, Math.min(24, Math.floor((r.w * (defaultStyle.maxW ?? 0.9)) / fontPx)));
+            // 上限 14 字：横屏分辨率下按宽度能放下 20+ 字，但阅读体验上单条不宜超过 14 字
+            const maxLen = Math.max(6, Math.min(14, Math.floor((r.w * (defaultStyle.maxW ?? 0.9)) / fontPx)));
             const res = await fetch('http://localhost:3501/api/video-studio/transcribe', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -2089,27 +2101,46 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                         onPointerDown={e => onPreviewSubPointerDown(e, currentSub)}
                                         onPointerMove={onPreviewSubPointerMove}
                                         onPointerUp={onPreviewSubPointerUp}
-                                        className={`absolute font-semibold px-2 py-0.5 rounded cursor-grab active:cursor-grabbing text-center ${selected?.kind === 'sub' && selected.id === currentSub.id ? 'ring-1 ring-cyan-400/80' : ''}`}
+                                        className={`absolute cursor-grab active:cursor-grabbing ${selected?.kind === 'sub' && selected.id === currentSub.id ? 'ring-1 ring-cyan-400/80 rounded' : ''}`}
                                         style={{
                                             left: `${currentSub.style.x * 100}%`,
                                             top: `${currentSub.style.y * 100}%`,
                                             transform: `translate(-${currentSub.style.x * 100}%, -${currentSub.style.y * 100}%)`,
-                                            fontSize: Math.max(10, currentSub.style.fontScale * videoBoxH),
-                                            color: currentSub.style.color,
-                                            textShadow: `0 0 3px ${currentSub.style.outlineColor}, 1.5px 1.5px 1.5px ${currentSub.style.outlineColor}, -1px -1px 1.5px ${currentSub.style.outlineColor}`,
-                                            backgroundColor: currentSub.style.background ? currentSub.style.backgroundColor + 'd9' : 'transparent',
                                             // width: max-content：绝对定位元素默认被容器右边界挤压收缩，
                                             // 拖到偏右时会被压成一字一行；按内容定宽后再用 maxWidth 控制换行
                                             width: 'max-content',
                                             maxWidth: Math.round((currentSub.style.maxW ?? 0.9) * videoBoxW),
-                                            whiteSpace: 'pre-wrap',
-                                            wordBreak: 'break-all',
                                         }}
                                         title="拖拽调整字幕位置"
                                     >
-                                        {currentSub.text}
+                                        {/* 内层负责视觉与入场动画（外层 transform 用于锚定定位，不能被动画覆盖） */}
+                                        <span
+                                            key={`${currentSub.id}_${currentSub.start}`}
+                                            className="block font-semibold px-2 py-0.5 rounded text-center"
+                                            style={{
+                                                fontSize: Math.max(10, currentSub.style.fontScale * videoBoxH),
+                                                color: currentSub.style.color,
+                                                textShadow: `0 0 3px ${currentSub.style.outlineColor}, 1.5px 1.5px 1.5px ${currentSub.style.outlineColor}, -1px -1px 1.5px ${currentSub.style.outlineColor}`,
+                                                backgroundColor: currentSub.style.background
+                                                    ? currentSub.style.backgroundColor + Math.round(Math.min(1, Math.max(0, currentSub.style.bgOpacity ?? 0.85)) * 255).toString(16).padStart(2, '0')
+                                                    : 'transparent',
+                                                whiteSpace: 'pre-wrap',
+                                                wordBreak: 'break-all',
+                                                animation: currentSub.style.anim === 'fade' ? 'subFadeIn 0.3s ease-out'
+                                                    : currentSub.style.anim === 'slideup' ? 'subSlideUp 0.35s ease-out'
+                                                    : currentSub.style.anim === 'pop' ? 'subPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)'
+                                                    : undefined,
+                                            }}
+                                        >
+                                            {currentSub.text}
+                                        </span>
                                     </span>
                                 )}
+                                <style>{`
+                                    @keyframes subFadeIn { from { opacity: 0 } to { opacity: 1 } }
+                                    @keyframes subSlideUp { from { opacity: 0; transform: translateY(0.6em) } to { opacity: 1; transform: none } }
+                                    @keyframes subPop { 0% { opacity: 0; transform: scale(0.5) } 100% { opacity: 1; transform: scale(1) } }
+                                `}</style>
                             </div>
                         )}
                     </div>
@@ -2383,6 +2414,22 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                         className="flex-1 h-6 bg-neutral-900 border border-neutral-700 rounded cursor-pointer" />
                                 )}
                             </div>
+                            {selSub.style.background && (
+                                <label className="block text-[11px] text-neutral-400">
+                                    气泡不透明度 {Math.round((selSub.style.bgOpacity ?? 0.85) * 100)}%
+                                    <input type="range" min={0.1} max={1} step={0.05} value={selSub.style.bgOpacity ?? 0.85}
+                                        onChange={e => patchSubStyle(selSub.id, { bgOpacity: Number(e.target.value) })} className="mt-1 w-full" />
+                                </label>
+                            )}
+                            <div className="text-[11px] text-neutral-400">入场动画</div>
+                            <div className="flex gap-1.5">
+                                {SUB_ANIMS.map(a => (
+                                    <button key={a.id} onClick={() => patchSubStyle(selSub.id, { anim: a.id })}
+                                        className={`flex-1 text-[10px] py-1.5 rounded border ${(selSub.style.anim ?? 'none') === a.id ? 'bg-yellow-600/30 border-yellow-600 text-yellow-300' : 'bg-neutral-900 border-neutral-700 text-neutral-400 hover:border-neutral-500'}`}>
+                                        {a.name}
+                                    </button>
+                                ))}
+                            </div>
                             {/* 位置：预览可直接拖拽，这里给快捷位 + 微调 */}
                             <div className="text-[11px] text-neutral-400">位置（可直接在预览画面拖拽字幕）</div>
                             <div className="flex gap-1.5">
@@ -2536,6 +2583,22 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                         onChange={e => setDefaultStyle(s => ({ ...s, backgroundColor: e.target.value }))}
                                         className="flex-1 h-6 bg-neutral-900 border border-neutral-700 rounded cursor-pointer" />
                                 )}
+                            </div>
+                            {defaultStyle.background && (
+                                <label className="block text-[11px] text-neutral-400">
+                                    气泡不透明度 {Math.round((defaultStyle.bgOpacity ?? 0.85) * 100)}%
+                                    <input type="range" min={0.1} max={1} step={0.05} value={defaultStyle.bgOpacity ?? 0.85}
+                                        onChange={e => setDefaultStyle(s => ({ ...s, bgOpacity: Number(e.target.value) }))} className="mt-1 w-full" />
+                                </label>
+                            )}
+                            <div className="text-[11px] text-neutral-400">入场动画（新生成字幕默认）</div>
+                            <div className="flex gap-1.5">
+                                {SUB_ANIMS.map(a => (
+                                    <button key={a.id} onClick={() => setDefaultStyle(s => ({ ...s, anim: a.id }))}
+                                        className={`flex-1 text-[10px] py-1.5 rounded border ${(defaultStyle.anim ?? 'none') === a.id ? 'bg-yellow-600/30 border-yellow-600 text-yellow-300' : 'bg-neutral-900 border-neutral-700 text-neutral-400 hover:border-neutral-500'}`}>
+                                        {a.name}
+                                    </button>
+                                ))}
                             </div>
                         </div>
                     )}

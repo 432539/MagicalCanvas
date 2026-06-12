@@ -888,6 +888,8 @@ router.post('/export', async (req, res) => {
                 const outlineColor = isHex(st.outlineColor) ? st.outlineColor : 'black';
                 const withBox = st.background === true;
                 const boxColor = isHex(st.backgroundColor) ? st.backgroundColor : 'black';
+                const bgOp = Math.min(1, Math.max(0, st.bgOpacity != null ? Number(st.bgOpacity) : 0.85));
+                const anim = ['fade', 'slideup', 'pop'].includes(st.anim) ? st.anim : 'none';
                 // 自由位置：x/y 为 0~1 的画面比例（0.5,0.92 = 底部居中）
                 const xFrac = Math.min(1, Math.max(0, st.x != null ? Number(st.x) : 0.5));
                 const yFrac = Math.min(1, Math.max(0, st.y != null ? Number(st.y) : 0.92));
@@ -897,12 +899,26 @@ router.post('/export', async (req, res) => {
 
                 const txtFile = path.join(tmpDir, `sub_${subIdx++}.txt`);
                 fs.writeFileSync(txtFile, wrapped, 'utf-8');
+
+                // 入场动画（drawtext 表达式实现）：淡入用 alpha 随时间变化；上滑额外让 y 从下方 0.6 字高处归位；
+                // 弹入（缩放）drawtext 做不了，导出时退化为淡入（预览有完整弹入效果）
+                const animDur = 0.35;
+                let alphaOpt = '';
+                let yExpr = `(h-text_h)*${yFrac.toFixed(4)}`;
+                if (anim !== 'none') {
+                    const s0 = start.toFixed(3);
+                    alphaOpt = `alpha='clip((t-${s0})/${animDur},0,1)':`;
+                    if (anim === 'slideup') {
+                        yExpr = `(h-text_h)*${yFrac.toFixed(4)}+${Math.round(fontSize * 0.6)}*max(0,1-(t-${s0})/${animDur})`;
+                    }
+                }
                 chain.push(
                     `drawtext=fontfile='${fontEsc}':textfile='${escapeFontPath(txtFile)}':` +
                     `fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${Math.max(2, Math.round(fontSize / 12))}:bordercolor=${outlineColor}@0.9:` +
                     `text_align=C:line_spacing=${Math.round(fontSize * 0.25)}:` +
-                    (withBox ? `box=1:boxcolor=${boxColor}@0.85:boxborderw=${Math.round(fontSize / 3)}:` : '') +
-                    `x=(w-text_w)*${xFrac.toFixed(4)}:y=(h-text_h)*${yFrac.toFixed(4)}:enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`
+                    (withBox ? `box=1:boxcolor=${boxColor}@${bgOp.toFixed(2)}:boxborderw=${Math.round(fontSize / 3)}:` : '') +
+                    alphaOpt +
+                    `x=(w-text_w)*${xFrac.toFixed(4)}:y='${yExpr}':enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`
                 );
             }
             if (chain.length > 0) {
