@@ -719,6 +719,22 @@ router.post('/export', async (req, res) => {
 
         // 字幕烧录（drawtext + textfile，避免转义问题）
         // 每条字幕可携带独立 style（剪映式逐条样式）；s.style 优先于全局 subtitleStyle
+        // 按最大宽度自动断行：CJK 字符宽≈字号、半角≈0.55 字号，逐字累计宽度插入换行
+        const NO_LINE_HEAD = /[，。！？、：；…,.!?;:）)】」』”’%℃]/; // 标点禁则：这些字符不放行首
+        const wrapByWidth = (text, maxPx, fontSize) => {
+            const lines = [];
+            for (const manual of String(text).split('\n')) {
+                let line = '';
+                let w = 0;
+                for (const ch of manual) {
+                    const cw = /[\u2E80-\u9FFF\uF900-\uFAFF\uFF01-\uFF60\u3000-\u303F]/.test(ch) ? fontSize : fontSize * 0.55;
+                    if (line && w + cw > maxPx && !NO_LINE_HEAD.test(ch)) { lines.push(line); line = ch; w = cw; }
+                    else { line += ch; w += cw; }
+                }
+                lines.push(line);
+            }
+            return lines.join('\n');
+        };
         const font = findSubtitleFont();
         let subIdx = 0;
         if (font && subtitles.length > 0) {
@@ -742,12 +758,16 @@ router.post('/export', async (req, res) => {
                 // 自由位置：x/y 为 0~1 的画面比例（0.5,0.92 = 底部居中）
                 const xFrac = Math.min(1, Math.max(0, st.x != null ? Number(st.x) : 0.5));
                 const yFrac = Math.min(1, Math.max(0, st.y != null ? Number(st.y) : 0.92));
+                // 最大宽度（画面宽度比例），超出自动换行（与前端预览一致）
+                const maxWFrac = Math.min(1, Math.max(0.3, Number(st.maxW) || 0.9));
+                const wrapped = wrapByWidth(text, width * maxWFrac, fontSize);
 
                 const txtFile = path.join(tmpDir, `sub_${subIdx++}.txt`);
-                fs.writeFileSync(txtFile, text, 'utf-8');
+                fs.writeFileSync(txtFile, wrapped, 'utf-8');
                 chain.push(
                     `drawtext=fontfile='${fontEsc}':textfile='${escapeFontPath(txtFile)}':` +
                     `fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${Math.max(2, Math.round(fontSize / 12))}:bordercolor=${outlineColor}@0.9:` +
+                    `text_align=C:line_spacing=${Math.round(fontSize * 0.25)}:` +
                     (withBox ? `box=1:boxcolor=${boxColor}@0.85:boxborderw=${Math.round(fontSize / 3)}:` : '') +
                     `x=(w-text_w)*${xFrac.toFixed(4)}:y=(h-text_h)*${yFrac.toFixed(4)}:enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`
                 );

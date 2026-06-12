@@ -75,6 +75,7 @@ interface SubtitleStyle {
     backgroundColor: string;  // 背景气泡颜色
     x: number;                // 位置 x：0~1 画面比例（0.5 = 水平居中）
     y: number;                // 位置 y：0~1 画面比例（0.92 = 底部）
+    maxW?: number;            // 最大宽度：0.3~1 画面宽度比例，超出自动换行（默认 0.9）
 }
 
 interface SubtitleItem {
@@ -244,6 +245,7 @@ const DEFAULT_SUB_STYLE: SubtitleStyle = {
     backgroundColor: '#000000',
     x: 0.5,
     y: 0.92,
+    maxW: 0.9,
 };
 
 // 8 种经典预设样式（参考剪映热门花字）
@@ -483,6 +485,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
     const timelineScrollRef = useRef<HTMLDivElement>(null);
     const videoWrapRef = useRef<HTMLDivElement>(null);
     const [videoBoxH, setVideoBoxH] = useState(360); // 预览视频实际显示高度（字幕字号按比例缩放）
+    const [videoBoxW, setVideoBoxW] = useState(640); // 预览视频实际显示宽度（字幕最大宽度按比例换算）
     const previewAreaRef = useRef<HTMLDivElement>(null);
     const [previewSize, setPreviewSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 }); // 预览区可用尺寸
 
@@ -563,6 +566,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         const ro = new ResizeObserver(entries => {
             for (const e of entries) {
                 if (e.contentRect.height > 0) setVideoBoxH(e.contentRect.height);
+                if (e.contentRect.width > 0) setVideoBoxW(e.contentRect.width);
             }
         });
         ro.observe(videoWrapRef.current);
@@ -2089,8 +2093,10 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                             color: currentSub.style.color,
                                             textShadow: `0 0 3px ${currentSub.style.outlineColor}, 1.5px 1.5px 1.5px ${currentSub.style.outlineColor}, -1px -1px 1.5px ${currentSub.style.outlineColor}`,
                                             backgroundColor: currentSub.style.background ? currentSub.style.backgroundColor + 'd9' : 'transparent',
-                                            // 与导出一致：不自动换行；在文本中按回车可手动换行
-                                            whiteSpace: 'pre',
+                                            // 超出最大宽度自动换行（导出端按相同比例断行）；回车仍可手动换行
+                                            maxWidth: Math.round((currentSub.style.maxW ?? 0.9) * videoBoxW),
+                                            whiteSpace: 'pre-wrap',
+                                            wordBreak: 'break-all',
                                         }}
                                         title="拖拽调整字幕位置"
                                     >
@@ -2341,6 +2347,11 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                         className="w-14 bg-neutral-900 border border-neutral-700 rounded px-1.5 py-1 text-xs outline-none" />
                                 </div>
                             </label>
+                            <label className="block text-[11px] text-neutral-400">
+                                最大宽度 {Math.round((selSub.style.maxW ?? 0.9) * 100)}%（画面宽度比例，超出自动换行）
+                                <input type="range" min={0.3} max={1} step={0.05} value={selSub.style.maxW ?? 0.9}
+                                    onChange={e => patchSubStyle(selSub.id, { maxW: Number(e.target.value) })} className="mt-1 w-full" />
+                            </label>
                             <div className="flex gap-3">
                                 <label className="flex-1 text-[11px] text-neutral-400">字体颜色
                                     <input type="color" value={selSub.style.color}
@@ -2489,6 +2500,11 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                 字号 {(defaultStyle.fontScale * 100).toFixed(1)}%
                                 <input type="range" min={0.02} max={0.15} step={0.002} value={defaultStyle.fontScale}
                                     onChange={e => setDefaultStyle(s => ({ ...s, fontScale: Number(e.target.value) }))} className="mt-1 w-full" />
+                            </label>
+                            <label className="block text-[11px] text-neutral-400">
+                                最大宽度 {Math.round((defaultStyle.maxW ?? 0.9) * 100)}%（超出自动换行）
+                                <input type="range" min={0.3} max={1} step={0.05} value={defaultStyle.maxW ?? 0.9}
+                                    onChange={e => setDefaultStyle(s => ({ ...s, maxW: Number(e.target.value) }))} className="mt-1 w-full" />
                             </label>
                             <div className="flex gap-3">
                                 <label className="flex-1 text-[11px] text-neutral-400">字体颜色
