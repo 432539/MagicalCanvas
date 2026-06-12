@@ -3466,11 +3466,13 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                     </div>
                 )}
                 {/* 纵向滚动容器：轨道头与轨道内容一起上下滚动 */}
-                <div className="flex-1 flex min-h-0 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: '#404040 #0e0e0e' }}>
+                <div className="flex-1 min-h-0 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: '#404040 #0e0e0e' }}>
+                {/* 内层自然高度的行：内容超出时撑开滚动，而不是压缩行高 */}
+                <div className="flex min-h-full">
                 {/* 轨道头（固定列，与各轨行高对齐） */}
                 <div className="w-16 flex-shrink-0 border-r border-neutral-800 bg-[#121212] flex flex-col select-none">
                     <div className="h-6 border-b border-neutral-800 flex-shrink-0" />
-                    <div className="h-14 flex flex-col items-center justify-center gap-0.5 border-b border-neutral-900">
+                    <div className="h-14 flex-shrink-0 flex flex-col items-center justify-center gap-0.5 border-b border-neutral-900">
                         <span className="text-[10px] text-neutral-400 font-medium">视频</span>
                         <button
                             onClick={() => setVideoTrackMuted(m => !m)}
@@ -3484,7 +3486,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         const laneEmpty = !overlays.some(o => oTrack(o) === L);
                         const isLast = L === overlayLanes - 1;
                         return (
-                            <div key={`ovh${L}`} className="h-14 flex flex-col items-center justify-center gap-0.5 border-b border-neutral-900">
+                            <div key={`ovh${L}`} className="h-14 flex-shrink-0 flex flex-col items-center justify-center gap-0.5 border-b border-neutral-900">
                                 <span className="text-[10px] text-amber-400/80 font-medium">画中画{overlayLanes > 1 ? L + 1 : ''}</span>
                                 <div className="flex items-center gap-0.5">
                                     {isLast && overlayLanes < MAX_OVERLAY_LANES && (
@@ -3513,7 +3515,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         const laneEmpty = !audios.some(a => aTrack(a) === L);
                         const isLast = L === audioLanes - 1;
                         return (
-                            <div key={L} className="h-14 flex flex-col items-center justify-center gap-0.5 border-b border-neutral-900">
+                            <div key={L} className="h-14 flex-shrink-0 flex flex-col items-center justify-center gap-0.5 border-b border-neutral-900">
                                 <span className="text-[10px] text-neutral-400 font-medium">音轨{L + 1}</span>
                                 <div className="flex items-center gap-0.5">
                                     <button
@@ -3540,7 +3542,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         );
                     })}
                     {/* 添加音轨 */}
-                    <div className="h-6 flex items-center justify-center border-b border-neutral-900">
+                    <div className="h-6 flex-shrink-0 flex items-center justify-center border-b border-neutral-900">
                         <button
                             onClick={() => setAudioLaneCount(Math.min(MAX_AUDIO_LANES, audioLanes + 1))}
                             disabled={audioLanes >= MAX_AUDIO_LANES}
@@ -3550,10 +3552,10 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                             ＋ 音轨
                         </button>
                     </div>
-                    <div className="h-14 flex items-center justify-center border-b border-neutral-900">
+                    <div className="h-14 flex-shrink-0 flex items-center justify-center border-b border-neutral-900">
                         <span className="text-[10px] text-neutral-400 font-medium">字幕</span>
                     </div>
-                    <div className="h-14 flex items-center justify-center border-b border-neutral-900">
+                    <div className="h-14 flex-shrink-0 flex items-center justify-center border-b border-neutral-900">
                         <span className="text-[10px] text-neutral-400 font-medium">贴纸</span>
                     </div>
                 </div>
@@ -3867,6 +3869,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                             />
                         )}
                     </div>
+                </div>
                 </div>
                 </div>
             </div>
