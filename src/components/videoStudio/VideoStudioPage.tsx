@@ -2247,6 +2247,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
     const [assistantSending, setAssistantSending] = useState(false);
     const [applyingPlan, setApplyingPlan] = useState(false);
     const [applyProgress, setApplyProgress] = useState('');
+    const assistantScrollRef = useRef<HTMLDivElement>(null);
 
     /** 把当前剧本/素材/时间轴打包成精简上下文喂给 AI */
     const buildAssistantContext = useCallback(() => {
@@ -2281,56 +2282,82 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
         };
     }, [resolution, script, voice, library, clips, clipStarts, subtitles, audios, transitions, totalDuration]);
 
-    /** 执行一个 AI 方案的动作列表 */
+    const [assistantSteps, setAssistantSteps] = useState<{ label: string; done: boolean }[]>([]);
+
+    // 新消息/进度时滚到底部
+    useEffect(() => {
+        const el = assistantScrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+    }, [assistantMsgs, assistantSteps, assistantSending]);
+
+    /** 全自动执行一个 AI 方案的动作列表（一气呵成，带步骤进度；用本地镜像解决 setState 异步导致的脏闭包） */
     const applyAssistantPlan = async (plan: AssistantPlan) => {
         if (applyingPlan || !plan?.actions?.length) return;
         setApplyingPlan(true);
         setErrorMsg(null);
-        let clipCount = clips.length;
+        // 本地镜像：方案内多个动作顺序执行时，setState 还没生效，靠本地数组传递最新片段
+        let localClips: Clip[] = [...clips];
+        const localStarts = () => {
+            const s: number[] = []; let t = 0;
+            for (const c of localClips) { s.push(t); t += clipDur(c); }
+            return s;
+        };
+        const stepLabel = (t: string) => t === 'add_clips' ? '排列镜头' : t === 'set_transitions' ? '添加转场' : t === 'align_dialogue_subtitles' || t === 'add_subtitles' ? '生成字幕' : t === 'voiceover' ? '生成配音' : '处理';
+        setAssistantSteps(plan.actions.map(a => ({ label: stepLabel(a.type), done: false })));
+        const markDone = (i: number) => setAssistantSteps(prev => prev.map((s, idx) => idx === i ? { ...s, done: true } : s));
         try {
-            for (const act of plan.actions) {
+            for (let ai = 0; ai < plan.actions.length; ai++) {
+                const act = plan.actions[ai];
                 if (act.type === 'add_clips' && Array.isArray(act.assetIds)) {
-                    setApplyProgress('正在添加素材…');
+                    setApplyProgress('正在排列镜头…');
                     const assets = act.assetIds
                         .map((id: string) => library.find(v => v.id === id))
                         .filter(Boolean) as LibraryAsset[];
-                    if (assets.length === 0) continue;
-                    const durations = await Promise.all(assets.map(v =>
-                        v.assetType === 'image' ? Promise.resolve(4) : probeVideoDuration(v.url.startsWith('http') ? v.url : `${v.url}`)
-                    ));
-                    const newClips: Clip[] = [];
-                    assets.forEach((v, i) => {
-                        if (v.assetType === 'image') newClips.push(buildClip(v, 600, 4, true));
-                        else if (durations[i] > 0) newClips.push(buildClip(v, durations[i], durations[i], false));
-                    });
-                    if (newClips.length > 0) {
-                        clipCount += newClips.length;
-                        setClips(prev => {
-                            const next = [...prev, ...newClips];
-                            setTransitions(tp => {
-                                const need = Math.max(0, next.length - 1);
-                                const arr = [...tp];
-                                while (arr.length < need) arr.push({ type: 'none', duration: 0.5 });
-                                return arr.slice(0, need);
-                            });
-                            return next;
+                    if (assets.length > 0) {
+                        const durations = await Promise.all(assets.map(v =>
+                            v.assetType === 'image' ? Promise.resolve(4) : probeVideoDuration(v.url.startsWith('http') ? v.url : `${v.url}`)
+                        ));
+                        const newClips: Clip[] = [];
+                        assets.forEach((v, i) => {
+                            if (v.assetType === 'image') newClips.push(buildClip(v, 600, 4, true));
+                            else if (durations[i] > 0) newClips.push(buildClip(v, durations[i], durations[i], false));
                         });
+                        if (newClips.length > 0) {
+                            localClips = [...localClips, ...newClips];
+                            setClips(prev => {
+                                const next = [...prev, ...newClips];
+                                setTransitions(tp => {
+                                    const need = Math.max(0, next.length - 1);
+                                    const arr = [...tp];
+                                    while (arr.length < need) arr.push({ type: 'none', duration: 0.5 });
+                                    return arr.slice(0, need);
+                                });
+                                return next;
+                            });
+                        }
                     }
+                } else if (act.type === 'set_transitions') {
+                    const type = String(act.transition || 'fade');
+                    const need = Math.max(0, localClips.length - 1);
+                    setTransitions(() => Array.from({ length: need }, () => ({ type, duration: 0.5 })));
+                } else if (act.type === 'align_dialogue_subtitles') {
+                    setApplyProgress('正在按台词生成字幕…');
+                    const starts = localStarts();
+                    const subs: SubtitleItem[] = localClips
+                        .map((c, i) => ({ c, i }))
+                        .filter(({ c }) => (c.dialogue || '').trim())
+                        .map(({ c, i }) => ({ id: uid(), text: (c.dialogue || '').trim(), start: starts[i], end: starts[i] + clipDur(c), style: { ...defaultStyle } }));
+                    if (subs.length > 0) setSubtitles(prev => [...prev, ...subs].sort((a, b) => a.start - b.start));
                 } else if (act.type === 'add_subtitles' && Array.isArray(act.items)) {
                     const newSubs: SubtitleItem[] = act.items
                         .filter((it: any) => it && it.text != null)
                         .map((it: any) => ({
-                            id: uid(),
-                            text: String(it.text),
+                            id: uid(), text: String(it.text),
                             start: Math.max(0, Number(it.start) || 0),
                             end: Math.max(Number(it.start) || 0, Number(it.end) || (Number(it.start) || 0) + 2),
                             style: { ...defaultStyle },
                         }));
                     if (newSubs.length > 0) setSubtitles(prev => [...prev, ...newSubs].sort((a, b) => a.start - b.start));
-                } else if (act.type === 'set_transitions') {
-                    const type = String(act.transition || act.type || 'fade');
-                    const need = Math.max(0, clipCount - 1);
-                    setTransitions(() => Array.from({ length: need }, () => ({ type, duration: 0.5 })));
                 } else if (act.type === 'voiceover' && Array.isArray(act.sentences)) {
                     const sentences = act.sentences.map((s: any) => String(s).trim()).filter(Boolean);
                     let cursor = Number(act.startAt) || 0;
@@ -2353,19 +2380,24 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         setSubtitles(prev => [...prev, ...newSubs].sort((a, b) => a.start - b.start));
                     }
                 }
+                markDone(ai);
             }
             setAssistantMsgs(prev => prev.map(m => m.plan === plan ? { ...m, applied: true } : m));
+            setAssistantMsgs(prev => [...prev, { role: 'assistant', content: '✅ 成片完成！已停在时间轴，你可以播放预览，或继续告诉我怎么微调（例如：删掉第 3 个镜头、配音换女声、转场改叠化）。要导出时点右上角「导出视频」。', plan: null }]);
         } catch (err: any) {
             setErrorMsg(err.message || '执行失败');
+            setAssistantMsgs(prev => [...prev, { role: 'assistant', content: `执行时出错了：${err.message || '失败'}。可以再说一次或换个说法。`, plan: null }]);
         } finally {
             setApplyingPlan(false);
             setApplyProgress('');
+            setTimeout(() => setAssistantSteps([]), 2500);
         }
     };
 
-    const sendAssistant = async () => {
-        const text = assistantInput.trim();
-        if (!text || assistantSending) return;
+    /** 发送一条消息给 AI 导演；若返回完整方案则自动执行（全自动模式） */
+    const sendAssistant = async (preset?: string) => {
+        const text = (preset ?? assistantInput).trim();
+        if (!text || assistantSending || applyingPlan) return;
         const history = [...assistantMsgs, { role: 'user' as const, content: text }];
         setAssistantMsgs(history);
         setAssistantInput('');
@@ -2381,10 +2413,13 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
             });
             const data = await resp.json();
             if (!resp.ok) throw new Error(data.error || 'AI 助手请求失败');
-            setAssistantMsgs(prev => [...prev, { role: 'assistant', content: data.reply || '好的。', plan: data.plan || null }]);
+            const plan: AssistantPlan | null = data.plan && Array.isArray(data.plan.actions) && data.plan.actions.length > 0 ? data.plan : null;
+            setAssistantMsgs(prev => [...prev, { role: 'assistant', content: data.reply || (plan ? '好的，开始为你成片。' : '好的。'), plan }]);
+            // 全自动：拿到完整方案立即执行
+            if (plan) await applyAssistantPlan(plan);
         } catch (err: any) {
             setErrorMsg(err.message || 'AI 助手请求失败');
-            setAssistantMsgs(prev => [...prev, { role: 'assistant', content: `出错了：${err.message || '请求失败'}`, plan: null }]);
+            setAssistantMsgs(prev => [...prev, { role: 'assistant', content: `出错了：${err.message || '请求失败'}。请重试或换个说法。`, plan: null }]);
         } finally {
             setAssistantSending(false);
         }
@@ -2984,8 +3019,8 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                     </div>
                 </div>
 
-                {/* --- 右：属性面板（视频 / 文字 / 声音 Tab）--- */}
-                <div className="w-72 border-l border-neutral-800 flex flex-col flex-shrink-0">
+                {/* --- 右：属性面板（视频 / 文字 / 声音 Tab）；AI 助手 Tab 时加宽 --- */}
+                <div className={`${panelTab === 'ai' ? 'w-[400px]' : 'w-72'} border-l border-neutral-800 flex flex-col flex-shrink-0 transition-[width] duration-200`}>
                     {/* Tab 头 */}
                     <div className="flex border-b border-neutral-800 flex-shrink-0">
                         <button
@@ -3006,22 +3041,36 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                         ))}
                     </div>
 
-                    {/* ===== AI 剪辑助手 Tab ===== */}
+                    {/* ===== AI 自动剪辑导演 Tab ===== */}
                     {panelTab === 'ai' && (
                         <div className="flex-1 min-h-0 flex flex-col">
-                            <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
+                            {/* 顶部：一键智能成片 */}
+                            <div className="flex-shrink-0 p-3 border-b border-neutral-800 bg-gradient-to-b from-cyan-500/10 to-transparent">
+                                <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-xs mb-1"><Sparkles size={14} /> AI 自动剪辑导演</div>
+                                <p className="text-[10.5px] text-neutral-400 leading-4 mb-2">告诉我你想要什么样的成片，我会问几个关键问题，然后自动帮你排镜头、加转场、配字幕和解说，一键成片。</p>
+                                <button
+                                    onClick={() => sendAssistant('帮我把素材库里的镜头做成一条完整的成片，你先问我几个关键问题，然后全自动成片。')}
+                                    disabled={assistantSending || applyingPlan || library.length === 0}
+                                    className="w-full py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
+                                >
+                                    {(assistantSending || applyingPlan) ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} 一键智能成片
+                                </button>
+                                {library.length === 0 && <div className="text-[10px] text-neutral-600 mt-1.5 text-center">素材库为空，请先在素材列表导入或生成素材</div>}
+                            </div>
+
+                            {/* 对话区 */}
+                            <div ref={assistantScrollRef} className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2.5">
                                 {assistantMsgs.length === 0 && (
                                     <div className="text-[11px] text-neutral-500 leading-5 space-y-2">
-                                        <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-xs"><Sparkles size={13} /> AI 剪辑助手</div>
-                                        <p>用一句话告诉我你想怎么剪，我会读取你的素材、剧本和当前时间轴，给出方案并替你执行。例如：</p>
+                                        <p className="text-neutral-400">也可以直接说你的需求，例如：</p>
                                         <div className="space-y-1.5">
                                             {[
-                                                '按镜头顺序把所有素材排进时间轴',
-                                                '把每个镜头的台词作为字幕对齐上去',
-                                                '用解说脚本生成配音和字幕',
-                                                '在所有片段之间加淡入淡出转场',
+                                                '做一条快节奏的混剪，加淡入淡出转场',
+                                                '按镜头顺序成片，用台词做字幕',
+                                                '帮我写一段解说并配音，加字幕',
+                                                '竖屏短视频，自动配解说和字幕',
                                             ].map(s => (
-                                                <button key={s} onClick={() => setAssistantInput(s)}
+                                                <button key={s} onClick={() => sendAssistant(s)}
                                                     className="block w-full text-left px-2.5 py-1.5 rounded border border-neutral-800 bg-neutral-900 hover:border-cyan-600 hover:text-cyan-300 text-neutral-400 transition-colors">
                                                     {s}
                                                 </button>
@@ -3031,23 +3080,10 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                 )}
                                 {assistantMsgs.map((m, i) => (
                                     <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                        <div className={`max-w-[88%] rounded-lg px-2.5 py-1.5 text-[11px] leading-5 whitespace-pre-wrap ${m.role === 'user' ? 'bg-cyan-600/25 text-cyan-100' : 'bg-neutral-800 text-neutral-200'}`}>
+                                        <div className={`max-w-[90%] rounded-lg px-2.5 py-1.5 text-[11px] leading-5 whitespace-pre-wrap ${m.role === 'user' ? 'bg-cyan-600/25 text-cyan-100' : 'bg-neutral-800 text-neutral-200'}`}>
                                             {m.content}
-                                            {m.role === 'assistant' && m.plan && m.plan.actions.length > 0 && (
-                                                <div className="mt-2 pt-2 border-t border-neutral-700/70">
-                                                    <div className="text-[10px] text-neutral-400 mb-1.5">方案包含 {m.plan.actions.length} 个剪辑动作</div>
-                                                    {m.applied ? (
-                                                        <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400"><Check size={11} /> 已执行（可用撤销回退）</span>
-                                                    ) : (
-                                                        <button
-                                                            onClick={() => applyAssistantPlan(m.plan!)}
-                                                            disabled={applyingPlan}
-                                                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-[10px] font-medium disabled:opacity-50"
-                                                        >
-                                                            {applyingPlan ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />} 执行方案
-                                                        </button>
-                                                    )}
-                                                </div>
+                                            {m.role === 'assistant' && m.plan && m.plan.actions.length > 0 && m.applied && (
+                                                <div className="mt-1.5 pt-1.5 border-t border-neutral-700/70 text-[10px] text-emerald-400 flex items-center gap-1"><Check size={11} /> 已自动执行（可用左下角撤销回退）</div>
                                             )}
                                         </div>
                                     </div>
@@ -3055,23 +3091,35 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                                 {assistantSending && (
                                     <div className="flex justify-start"><div className="rounded-lg px-2.5 py-1.5 bg-neutral-800 text-neutral-400 text-[11px] flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> 思考中…</div></div>
                                 )}
-                                {applyProgress && (
-                                    <div className="text-[10px] text-cyan-400 flex items-center gap-1.5"><Loader2 size={11} className="animate-spin" /> {applyProgress}</div>
+                                {/* 成片步骤进度 */}
+                                {assistantSteps.length > 0 && (
+                                    <div className="rounded-lg border border-cyan-800/50 bg-cyan-500/5 p-2 space-y-1">
+                                        {assistantSteps.map((s, idx) => (
+                                            <div key={idx} className="flex items-center gap-1.5 text-[11px]">
+                                                {s.done ? <Check size={12} className="text-emerald-400" /> : <Loader2 size={12} className="animate-spin text-cyan-400" />}
+                                                <span className={s.done ? 'text-neutral-400' : 'text-cyan-300'}>{s.label}</span>
+                                            </div>
+                                        ))}
+                                        {applyProgress && <div className="text-[10px] text-cyan-400/80 pl-4">{applyProgress}</div>}
+                                    </div>
                                 )}
                             </div>
+
+                            {/* 输入区 */}
                             <div className="flex-shrink-0 border-t border-neutral-800 p-2">
                                 <div className="flex items-end gap-1.5">
                                     <textarea
                                         value={assistantInput}
                                         onChange={e => setAssistantInput(e.target.value)}
                                         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAssistant(); } }}
-                                        placeholder="描述你想怎么剪辑…（Enter 发送）"
+                                        placeholder={applyingPlan ? '正在成片中…' : '回答问题或描述需求…（Enter 发送）'}
                                         rows={2}
-                                        className="flex-1 resize-none bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-[11px] text-neutral-200 focus:border-cyan-600 outline-none"
+                                        disabled={applyingPlan}
+                                        className="flex-1 resize-none bg-neutral-900 border border-neutral-700 rounded px-2 py-1.5 text-[11px] text-neutral-200 focus:border-cyan-600 outline-none disabled:opacity-50"
                                     />
                                     <button
-                                        onClick={sendAssistant}
-                                        disabled={assistantSending || !assistantInput.trim()}
+                                        onClick={() => sendAssistant()}
+                                        disabled={assistantSending || applyingPlan || !assistantInput.trim()}
                                         className="flex-shrink-0 w-8 h-8 rounded bg-cyan-600 hover:bg-cyan-500 flex items-center justify-center text-white disabled:opacity-40"
                                         title="发送"
                                     >
