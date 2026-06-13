@@ -2398,7 +2398,7 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
             <div className="flex-1 flex min-h-0">
                 {/* --- 左：素材库（支持拖放文件导入） --- */}
                 <div
-                    className={`relative flex-1 min-w-[240px] border-r flex flex-col min-h-0 transition-colors ${libDragOver ? 'border-cyan-500' : 'border-neutral-800'}`}
+                    className={`relative w-[300px] flex-shrink-0 border-r flex flex-col min-h-0 transition-colors ${libDragOver ? 'border-cyan-500' : 'border-neutral-800'}`}
                     onDragOver={handleLibDragOver}
                     onDragLeave={handleLibDragLeave}
                     onDrop={handleLibDrop}
@@ -2569,16 +2569,8 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                     </div>
                 </div>
 
-                {/* --- 中：预览（宽度按项目画幅自适应，省下的空间给素材列表） --- */}
-                <div
-                    ref={previewColRef}
-                    className="flex flex-col flex-shrink-0 min-w-0 bg-[#0a0a0b]"
-                    style={{
-                        width: previewSize.h > 0
-                            ? `clamp(340px, ${Math.round(previewSize.h * 0.92 * projAspect) + 16}px, 58%)`
-                            : '50%',
-                    }}
-                >
+                {/* --- 中：预览（列宽固定占满剩余空间，画面内容框按项目画幅缩放） --- */}
+                <div ref={previewColRef} className="flex-1 flex flex-col min-w-0 bg-[#0a0a0b]">
                     <div
                         ref={previewAreaRef}
                         className="flex-1 flex items-center justify-center bg-black relative min-h-0 overflow-hidden"
