@@ -3019,8 +3019,8 @@ export const VideoStudioPage: React.FC<VideoStudioPageProps> = ({ isOpen, onClos
                     </div>
                 </div>
 
-                {/* --- 右：属性面板（视频 / 文字 / 声音 Tab）；AI 助手 Tab 时加宽 --- */}
-                <div className={`${panelTab === 'ai' ? 'w-[400px]' : 'w-72'} border-l border-neutral-800 flex flex-col flex-shrink-0 transition-[width] duration-200`}>
+                {/* --- 右：属性面板（固定最小宽度 + 随窗口自适应，所有 Tab 宽度一致不跳动） --- */}
+                <div className="w-[clamp(320px,22vw,420px)] border-l border-neutral-800 flex flex-col flex-shrink-0">
                     {/* Tab 头 */}
                     <div className="flex border-b border-neutral-800 flex-shrink-0">
                         <button
