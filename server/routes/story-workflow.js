@@ -138,7 +138,7 @@ router.post('/analyze', async (req, res) => {
         const storyboardUser = [
             `统一风格锚定词：${styleAnchor}`,
             `画幅：${ratioDesc}`,
-            `单镜头基准时长：${dur} 秒（无台词镜头不超过此值，有台词镜头按台词字数加长）`,
+            `单镜头基准时长：${dur} 秒（每个镜头 duration 默认就填 ${dur}，绝对不要用 1-2 秒的碎时长；仅当台词较长时才适当加长）`,
             shotCountReq,
             `可用人物：${charNames.join('、') || '无'}`,
             `可用场景：${sceneNames.join('、') || '无'}`,
@@ -168,7 +168,10 @@ router.post('/analyze', async (req, res) => {
         };
         data.shots.forEach((s, i) => {
             s.index = i + 1;
-            s.duration = Math.max(2, Math.min(15, Number(s.duration) || dur));
+            // 时长严格以用户选择的基准时长为准；仅当台词较长时按字数(约每秒3字)加长，避免 AI 自定义碎时长
+            const dlgLen = String(s.dialogue || '').replace(/[^\u4e00-\u9fa5a-zA-Z]/g, '').length;
+            const dlgMin = dlgLen > 0 ? Math.ceil(dlgLen / 3) + 1 : 0;
+            s.duration = Math.min(15, Math.max(dur, dlgMin));
             s.characters = Array.isArray(s.characters) ? s.characters : [];
             s.props = Array.isArray(s.props) ? s.props : [];
         });
