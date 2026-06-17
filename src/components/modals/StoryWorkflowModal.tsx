@@ -27,9 +27,10 @@ export interface StoryShot {
     duration: number;
     dialogue: string;
     shotSize?: string;
+    keyframe?: 'single' | 'startend';
 }
 
-export type KeyframeMode = 'single' | 'startend' | 'grid9';
+export type KeyframeMode = 'auto' | 'single' | 'startend' | 'grid9';
 
 export interface StoryWorkflowResult {
     title: string;
@@ -60,7 +61,8 @@ interface StoryWorkflowModalProps {
 }
 
 const KEYFRAME_MODES: { value: KeyframeMode; label: string; desc: string }[] = [
-    { value: 'single', label: '单帧', desc: '每镜 1 张分镜图 → 视频（默认）' },
+    { value: 'auto', label: '智能', desc: 'AI 按每镜复杂度/节奏/连续性，自动决定用单帧还是首尾帧（推荐）' },
+    { value: 'single', label: '单帧', desc: '每镜 1 张分镜图 → 视频' },
     { value: 'startend', label: '首尾帧', desc: '每镜出首帧+尾帧两张图，图生视频更可控' },
     { value: 'grid9', label: '九宫格预览', desc: '每 9 镜合成一张分镜预览图（省额度，不出视频）' },
 ];
@@ -94,7 +96,7 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
     const [maxShots, setMaxShots] = useState(12);
     const [autoShots, setAutoShots] = useState(true); // 默认 AI 自动判定镜头数
     const [aspectRatio, setAspectRatio] = useState('16:9');
-    const [keyframeMode, setKeyframeMode] = useState<KeyframeMode>('single');
+    const [keyframeMode, setKeyframeMode] = useState<KeyframeMode>('auto');
     const [autoGenerate, setAutoGenerate] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');

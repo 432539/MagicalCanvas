@@ -612,7 +612,7 @@ export default function App() {
     setIsBatchGenOpen(false);
   }, [nodes, setNodes, refreshGenConcurrency]);
 
-  const handleCreateStoryWorkflow = React.useCallback((result: StoryWorkflowResult, opts: { autoGenerate: boolean; aspectRatio?: string; keyframeMode?: 'single' | 'startend' | 'grid9' }) => {
+  const handleCreateStoryWorkflow = React.useCallback((result: StoryWorkflowResult, opts: { autoGenerate: boolean; aspectRatio?: string; keyframeMode?: 'auto' | 'single' | 'startend' | 'grid9' }) => {
     const GAP_X = 160;
     const GAP_Y = 70;
     // 统一画幅：分镜图 / 视频 / 场景空镜都用用户选择的比例
@@ -703,22 +703,23 @@ export default function App() {
         const prompt = `${result.styleAnchor || ''}，九宫格分镜预览图，3行3列共9格，每格一个连续镜头按从左到右、从上到下顺序排列，格子之间用细线分隔，整体风格统一。各格画面：${cells}`;
         shotNodes.push(mkImage(`分镜预览 ${g + 1}-${Math.min(g + 9, shots.length)}`, prompt, parentIds, '1:1'));
       }
-    } else if (mode === 'startend') {
-      // 首尾帧：每镜出首帧+尾帧两张图，视频用两张图做图生视频（首=起始帧，尾=结束帧）
+    } else {
+      // 单帧 / 首尾帧 / 智能（逐镜按 AI 推荐的 shot.keyframe 决定）
       shots.forEach((shot, i) => {
         const p = refToParents(shot);
         const nn = String(i + 1).padStart(2, '0');
-        const startN = mkImage(`分镜 ${nn} · 首帧`, shot.imagePrompt || shot.description || '', p, ratio);
-        const endN = mkImage(`分镜 ${nn} · 尾帧`, shot.endImagePrompt || `${shot.imagePrompt || shot.description || ''}，镜头结束瞬间，动作完成后的画面`, p, ratio);
-        shotNodes.push(startN, endN);
-        videoNodes.push(mkVideo(shot, i, [startN.id, endN.id]));
-      });
-    } else {
-      // 单帧（默认）：每镜 1 张分镜图 → 1 条视频
-      shots.forEach((shot, i) => {
-        const node = mkImage(`分镜 ${String(i + 1).padStart(2, '0')}`, shot.imagePrompt || shot.description || '', refToParents(shot), ratio);
-        shotNodes.push(node);
-        videoNodes.push(mkVideo(shot, i, [node.id]));
+        // 每镜实际方法：智能模式读 AI 推荐(shot.keyframe)，否则用全局模式
+        const eff = mode === 'auto' ? (shot.keyframe === 'startend' ? 'startend' : 'single') : mode;
+        if (eff === 'startend') {
+          const startN = mkImage(`分镜 ${nn} · 首帧`, shot.imagePrompt || shot.description || '', p, ratio);
+          const endN = mkImage(`分镜 ${nn} · 尾帧`, shot.endImagePrompt || `${shot.imagePrompt || shot.description || ''}，镜头结束瞬间，动作完成后的画面`, p, ratio);
+          shotNodes.push(startN, endN);
+          videoNodes.push(mkVideo(shot, i, [startN.id, endN.id]));
+        } else {
+          const node = mkImage(`分镜 ${nn}`, shot.imagePrompt || shot.description || '', p, ratio);
+          shotNodes.push(node);
+          videoNodes.push(mkVideo(shot, i, [node.id]));
+        }
       });
     }
 
