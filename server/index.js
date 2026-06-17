@@ -16,6 +16,7 @@ import localModelsRoutes from './routes/local-models.js';
 import storyboardRoutes from './routes/storyboard.js';
 import videoStudioRoutes from './routes/video-studio.js';
 import storyWorkflowRoutes from './routes/story-workflow.js';
+import promptTemplatesRoutes from './routes/prompt-templates.js';
 import { getKey, getAllSettings, saveConfig, SETTINGS_KEYS } from './config.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -250,6 +251,7 @@ app.use('/api/storyboard', storyboardRoutes);
 
 // Mount story workflow routes (一键创建工作流)
 app.use('/api/story-workflow', storyWorkflowRoutes);
+app.use('/api/prompt-templates', promptTemplatesRoutes);
 
 // NOTE: Old Kling helpers removed - now in server/services/kling.js
 

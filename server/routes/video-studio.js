@@ -285,7 +285,7 @@ router.post('/assistant', async (req, res) => {
                 lastErr = e;
                 const msg = String(e?.message || '');
                 // 仅对可恢复的瞬时错误重试（限流 / 暂不可用 / 网关错误）
-                if (!/unavailable|temporarily|rate|limit|429|500|502|503|504|timeout|超时/i.test(msg)) throw e;
+                if (!/unavailable|temporarily|rate|limit|429|500|502|503|504|timeout|超时|无权|权限|permission|denied|codex|分组|busy/i.test(msg)) throw e;
                 await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
             }
         }

@@ -639,7 +639,12 @@ export default function App() {
       type: NodeType.TEXT,
       title: `剧本 · ${result.title || '未命名'}`,
       x: 0, y: 0,
-      prompt: `《${result.title || '未命名'}》\n\n${result.summary || ''}\n\n【风格锚定】${result.styleAnchor || ''}`,
+      prompt: [
+        `《${result.title || '未命名'}》`,
+        result.summary || '',
+        `【风格锚定】${result.styleAnchor || ''}`,
+        result.screenplay ? `\n【节拍剧本】\n${result.screenplay}` : '',
+      ].filter(Boolean).join('\n\n'),
       textMode: 'editing' as const,
       aspectRatio: 'Auto',
       parentIds: [],

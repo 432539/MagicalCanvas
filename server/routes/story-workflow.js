@@ -1,14 +1,18 @@
 /**
- * 一键创建工作流：小说/剧本 → 结构化分镜与资产数据
+ * 一键创建工作流（三段式专业流水线）：小说/剧本 → 节拍剧本 → 资产 → 分镜
  *
- * 调用统一配置的文字模型（OpenAI 兼容 chat/completions），
- * 产出：风格锚定词 + 人物/场景/道具资产（含生图提示词）+ 分镜表（含图片/视频提示词、时长、资产引用）。
- * 前端据此自动创建画布节点与连线。
+ * 三段各用一套系统提示词（来自所选「提示词模板」，可被前端覆盖）：
+ *   ① screenplay：小说 → 节拍化剧本（情绪外化、台词时长、开篇钩子/爽点/悬念）
+ *   ② asset：剧本 → 人物三视图 / 场景全景 / 道具特写（输出 JSON）
+ *   ③ storyboard：剧本 + 资产 → 分镜（节奏自动镜数、景别差≥2、七要素融入 videoPrompt，输出 JSON）
+ *
+ * 全程 SSE 推送阶段进度。最终产出与旧版相同的数据结构，前端建节点逻辑无需改动。
  */
 
 import express from 'express';
 import { getKey } from '../config.js';
 import { gpt2apiChat } from '../services/gpt2api.js';
+import { BUILTIN_TEMPLATES, SCREENPLAY_PROMPT, buildAssetPrompt, buildStoryboardPrompt } from './prompt-templates.js';
 
 const router = express.Router();
 
@@ -23,49 +27,65 @@ function extractJson(text) {
     return JSON.parse(t.slice(start, end + 1));
 }
 
-const SYSTEM_PROMPT = `你是资深的影视分镜师、美术指导与 AI 绘画提示词专家。用户会提供一段小说或剧本，你需要把它改编为可直接用于 AI 图像/视频生成的完整制作数据。
-
-## 输出格式
-只输出一个 JSON 对象，禁止输出任何其他文字、解释或 markdown 代码块。结构如下：
-{
-  "title": "作品标题（根据内容起名，6字以内）",
-  "summary": "剧情概要（80字以内）",
-  "styleAnchor": "统一的风格锚定词（用于保证全片画风一致，中英文关键词均可，逗号分隔，必须具体到渲染方式/质感/色调，禁止写实摄影与二次元混用）",
-  "characters": [{ "name": "角色名", "desc": "中文视觉描述（性别开头，外貌/发型/服饰/体态/气质，40-80字）", "prompt": "英文生图提示词（逗号分隔关键词，以性别词开头如 a young man，包含发型/五官/服饰/气质，只写角色外观本身，不要写构图与背景词，三视图构图词由系统统一追加）" }],
-  "scenes": [{ "name": "场景名", "desc": "中文视觉描述（空间结构/光照氛围/关键陈设/色调，40-80字）", "prompt": "英文生图提示词（场景空镜，无人物，包含空间/陈设/氛围/色调，结尾加 establishing shot, no humans）" }],
-  "props": [{ "name": "道具名", "desc": "中文视觉描述（30-60字）", "prompt": "英文生图提示词（道具特写，结尾加 item close-up, clean background）" }],
-  "shots": [{
-    "index": 1,
-    "description": "中文画面描述：像导演讲戏一样具体——谁在哪做什么连续动作、景别（远/全/中/近/特写）、构图与人物朝向，禁止抽象情绪词",
-    "characters": ["出现的角色名"],
-    "scene": "所在场景名",
-    "props": ["涉及的道具名，没有则空数组"],
-    "imagePrompt": "该分镜的生图提示词：必须以 styleAnchor 开头，然后是场景关键词 + 角色完整外观关键词（直接复制该角色 prompt 中的核心外观词，保证一致性）+ 动作姿态 + 景别构图，最后加画质词",
-    "videoPrompt": "结构化视频生成提示词（中文，用 \\n 换行），固定按以下小节书写：\n【场景】环境与空间描述一句话\n【时间光照】时间/季节/天气/光线一句话\n【画面】按时间轴分 2-3 拍，每拍格式如 0-3秒：【景别或镜头运动】谁做什么连续动作；3-6秒：【镜头运动】动作发展（拍数与时间按该镜头 duration 划分）\n【人物】每个出场角色一行：角色名：【表情】具体表情【动作】具体肢体动作\n【台词】有台词时写：角色名：（语气描述）台词原文；无台词写 无\n【空间关系】镜头与人物/景物的空间位置关系一句话\n【氛围】光影/氛围/环境声音一句话",
-    "duration": 6,
-    "dialogue": "该镜头台词原文（没有则空字符串）"
-  }]
+/** 调用文字模型（带瞬时错误自动重试 + 进度回调） */
+async function callModel({ system, user, maxTokens, temperature, send, stage, onChars }) {
+    const apiKey = getKey('TEXT_API_KEY');
+    const model = getKey('TEXT_MODEL') || 'grok-4.20-fast';
+    const baseUrl = getKey('TEXT_API_URL');
+    const MAX_RETRY = 4;
+    let lastErr = null;
+    for (let attempt = 0; attempt <= MAX_RETRY; attempt++) {
+        try {
+            if (attempt > 0) send?.({ type: 'status', message: `${stage}：上游繁忙，第 ${attempt}/${MAX_RETRY} 次重试…` });
+            let lastPush = 0;
+            const reply = await gpt2apiChat({
+                messages: [
+                    { role: 'system', content: system },
+                    { role: 'user', content: user },
+                ],
+                model, baseUrl, apiKey, temperature: temperature ?? 0.6, maxTokens,
+                onDelta: (_d, total) => {
+                    if (total - lastPush >= 300 || lastPush === 0) {
+                        lastPush = total;
+                        onChars?.(total);
+                    }
+                },
+            });
+            if (reply && reply.trim()) return reply;
+            throw new Error('AI 返回内容为空');
+        } catch (e) {
+            lastErr = e;
+            const msg = String(e?.message || '');
+            console.warn(`[story-workflow] ${stage} attempt ${attempt + 1} failed:`, msg);
+            // 上游中转站对推理模型偶发：限流 / 暂不可用 / 路由到无权分组(Codex 分组) / 网关错误，均重试
+            if (!/unavailable|temporarily|rate|limit|429|500|502|503|504|timeout|超时|为空|无权|权限|permission|denied|codex|分组|busy/i.test(msg)) throw e;
+            await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
+        }
+    }
+    throw lastErr || new Error(`${stage}失败`);
 }
 
-## 创作规则
-1. 角色 ≤6 个、场景 ≤6 个、道具 ≤4 个，只提取有视觉意义的
-2. 每个分镜的 imagePrompt 必须独立完整可用（不依赖上下文），其中角色外观关键词必须与该角色资产 prompt 中的描述逐词一致，这是保证人物一致性的关键
-3. styleAnchor 必须出现在所有 characters/scenes/props/shots 的 prompt 开头
-4. 分镜要覆盖故事的起承转合，动作具体可拍摄
-5. 有台词的分镜 duration ≥ 台词字数÷4 + 1 秒；无台词镜头不超过用户指定时长
-6. shots 数量遵守用户要求的上限`;
-
 router.post('/analyze', async (req, res) => {
-    const { script, shotDuration = 6, style = '', maxShots = 12, aspectRatio = '16:9' } = req.body || {};
+    const {
+        script, shotDuration = 6, style = '', maxShots = 12, aspectRatio = '16:9',
+        prompts = null, styleAnchor: styleAnchorIn = '',
+    } = req.body || {};
+
     if (!script || !String(script).trim()) {
         return res.status(400).json({ error: '请输入小说或剧本内容' });
     }
-    const apiKey = getKey('TEXT_API_KEY');
-    if (!apiKey) {
+    if (!getKey('TEXT_API_KEY')) {
         return res.status(400).json({ error: '请先在设置中配置文字模型 API Key' });
     }
 
-    // SSE 响应：实时推送分析进度，前端展示浮层进度
+    // 三段提示词：优先用前端传入（所选模板/已编辑），否则回退内置「通用」模板
+    const fallback = BUILTIN_TEMPLATES[0];
+    const styleAnchor = (styleAnchorIn || style || fallback.styleAnchor || '').trim();
+    const screenplaySys = (prompts?.screenplay || SCREENPLAY_PROMPT);
+    const assetSys = (prompts?.asset || buildAssetPrompt('影视级', styleAnchor));
+    const storyboardSys = (prompts?.storyboard || buildStoryboardPrompt('影视级', styleAnchor));
+
+    // SSE
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -73,92 +93,79 @@ router.post('/analyze', async (req, res) => {
     const send = (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch { /* 客户端可能已断开 */ } };
 
     try {
-
-        // 控制输入长度，避免超出上下文（过长截断并提示模型）
         const MAX_INPUT = 16000;
         let text = String(script);
         let truncated = false;
-        if (text.length > MAX_INPUT) {
-            text = text.slice(0, MAX_INPUT);
-            truncated = true;
-        }
+        if (text.length > MAX_INPUT) { text = text.slice(0, MAX_INPUT); truncated = true; }
 
-        const shots = Math.max(3, Math.min(30, Number(maxShots) || 12));
         const dur = Math.max(3, Math.min(15, Number(shotDuration) || 6));
-
+        const isAuto = maxShots === 'auto' || maxShots === 'Auto';
+        const shots = isAuto ? null : Math.max(3, Math.min(60, Number(maxShots) || 12));
         const ratioDesc = aspectRatio === '9:16'
-            ? '9:16 竖屏（适合短视频平台，构图以纵向为主：人物宜近景/中景，场景注意纵深与上下空间布局）'
-            : '16:9 横屏（电影画幅，构图以横向为主：注意左右空间关系与宽幅场景调度）';
+            ? '9:16 竖屏（短视频构图，纵向为主：人物宜近景/中景）'
+            : '16:9 横屏（电影画幅，横向为主：注意左右空间调度）';
 
-        const userMsg = [
-            `【视频风格要求】${style || '由你根据故事题材决定最合适的风格'}`,
-            `【画幅比例】${ratioDesc}，所有分镜的画面描述与生图提示词都要按此画幅构图`,
-            `【单镜头基准时长】${dur} 秒（无台词镜头不超过此值）`,
-            `【分镜数量】${shots} 个左右（不超过 ${shots + 2} 个）`,
-            truncated ? '【注意】以下文本因过长被截断，请基于现有内容完成改编：' : '【小说/剧本原文】',
+        // ===== 第 1 段：小说 → 节拍剧本 =====
+        send({ type: 'status', message: '第 1/3 步：正在改编为节拍剧本…' });
+        const screenplayUser = [
+            `【画幅】${ratioDesc}`,
+            `【单镜头基准时长】${dur} 秒`,
+            truncated ? '【注意】以下文本过长已截断，请基于现有内容改编：' : '【小说/剧本原文】',
             text,
         ].join('\n\n');
-
-        // 调用文字模型（带自动重试：上游中转偶发 "Upstream service temporarily unavailable"）
-        const MAX_RETRY = 2;
-        let reply = null;
-        let lastErr = null;
-        for (let attempt = 0; attempt <= MAX_RETRY; attempt++) {
-            try {
-                send({
-                    type: 'status',
-                    message: attempt === 0 ? '正在连接文字模型…' : `上游服务繁忙，正在第 ${attempt}/${MAX_RETRY} 次重试…`,
-                });
-                let lastPush = 0;
-                reply = await gpt2apiChat({
-                    messages: [
-                        { role: 'system', content: SYSTEM_PROMPT },
-                        { role: 'user', content: userMsg },
-                    ],
-                    model: getKey('TEXT_MODEL') || 'grok-4.20-fast',
-                    baseUrl: getKey('TEXT_API_URL'),
-                    apiKey,
-                    temperature: 0.5,
-                    maxTokens: 24000,
-                    onDelta: (_d, total) => {
-                        // 节流：每 ~300 字符推一次进度
-                        if (total - lastPush >= 300 || lastPush === 0) {
-                            lastPush = total;
-                            send({ type: 'progress', chars: total });
-                        }
-                    },
-                });
-                if (reply && reply.trim()) break;
-                throw new Error('AI 返回内容为空');
-            } catch (e) {
-                lastErr = e;
-                reply = null;
-                console.warn(`[story-workflow] attempt ${attempt + 1} failed:`, e.message);
-            }
-        }
-        if (!reply) throw lastErr || new Error('剧本分析失败');
-
-        send({ type: 'status', message: '正在解析分镜数据…' });
-        const data = extractJson(reply);
-
-        // 基本结构校验与兜底
-        if (!Array.isArray(data.shots) || data.shots.length === 0) {
-            throw new Error('AI 返回的分镜数据为空，请重试或缩短输入文本');
-        }
-        data.characters = Array.isArray(data.characters) ? data.characters : [];
-        data.scenes = Array.isArray(data.scenes) ? data.scenes : [];
-        data.props = Array.isArray(data.props) ? data.props : [];
-        data.styleAnchor = data.styleAnchor || style || '';
-        // 角色资产统一用「三视图设定图」构图：左半边面部特写 + 右半边正/侧/背三视图，
-        // 白底干净背景。比逐张单图更利于后续分镜参考角色外观的一致性。
-        const CHAR_SHEET_SUFFIX = 'character design sheet, single image: left half is a large close-up face portrait, right half is full-body turnaround in three views (front view, side view, back view), standing pose, consistent appearance across all views, clean white background, character reference sheet style';
-        data.characters.forEach((c) => {
-            if (!c || typeof c !== 'object') return;
-            const p = String(c.prompt || c.desc || c.name || '').trim().replace(/[,，]\s*$/, '');
-            if (p && !/character (design )?sheet/i.test(p)) {
-                c.prompt = `${p}, ${CHAR_SHEET_SUFFIX}`;
-            }
+        const screenplay = await callModel({
+            system: screenplaySys, user: screenplayUser, maxTokens: 12000, temperature: 0.7,
+            send, stage: '改编剧本', onChars: (c) => send({ type: 'progress', stage: 1, chars: c }),
         });
+
+        // ===== 第 2 段：剧本 → 资产（人物/场景/道具） =====
+        send({ type: 'status', message: '第 2/3 步：正在提取人物、场景、道具…' });
+        const assetUser = `统一风格锚定词：${styleAnchor}\n画幅：${aspectRatio}\n\n【剧本】\n${screenplay}`;
+        const assetReply = await callModel({
+            system: assetSys, user: assetUser, maxTokens: 12000, temperature: 0.5,
+            send, stage: '提取资产', onChars: (c) => send({ type: 'progress', stage: 2, chars: c }),
+        });
+        const assetData = extractJson(assetReply);
+
+        // ===== 第 3 段：剧本 + 资产 → 分镜 =====
+        send({ type: 'status', message: '第 3/3 步：正在按节奏生成分镜…' });
+        const charNames = (assetData.characters || []).map(c => c.name).filter(Boolean);
+        const sceneNames = (assetData.scenes || []).map(s => s.name).filter(Boolean);
+        const propNames = (assetData.props || []).map(p => p.name).filter(Boolean);
+        const shotCountReq = isAuto
+            ? '【镜头数量】由你根据剧情节奏自动决定总镜头数（覆盖起承转合，一般 8~45 个，快节奏处镜头更密）'
+            : `【镜头数量】总镜头数约 ${shots} 个（不超过 ${shots + 3} 个）`;
+        const storyboardUser = [
+            `统一风格锚定词：${styleAnchor}`,
+            `画幅：${ratioDesc}`,
+            `单镜头基准时长：${dur} 秒（无台词镜头不超过此值，有台词镜头按台词字数加长）`,
+            shotCountReq,
+            `可用人物：${charNames.join('、') || '无'}`,
+            `可用场景：${sceneNames.join('、') || '无'}`,
+            `可用道具：${propNames.join('、') || '无'}`,
+            `\n【剧本】\n${screenplay}`,
+        ].join('\n');
+        const storyboardReply = await callModel({
+            system: storyboardSys, user: storyboardUser, maxTokens: 28000, temperature: 0.5,
+            send, stage: '生成分镜', onChars: (c) => send({ type: 'progress', stage: 3, chars: c }),
+        });
+        const sbData = extractJson(storyboardReply);
+
+        // ===== 合并 + 兜底校验 =====
+        send({ type: 'status', message: '正在整理分镜数据…' });
+        if (!Array.isArray(sbData.shots) || sbData.shots.length === 0) {
+            throw new Error('AI 返回的分镜数据为空，请重试或缩短输入');
+        }
+        const data = {
+            title: sbData.title || assetData.title || '未命名',
+            summary: sbData.summary || '',
+            styleAnchor: assetData.styleAnchor || styleAnchor,
+            characters: Array.isArray(assetData.characters) ? assetData.characters : [],
+            scenes: Array.isArray(assetData.scenes) ? assetData.scenes : [],
+            props: Array.isArray(assetData.props) ? assetData.props : [],
+            shots: sbData.shots,
+            screenplay, // 附带剧本全文，前端可写入剧本节点
+        };
         data.shots.forEach((s, i) => {
             s.index = i + 1;
             s.duration = Math.max(2, Math.min(15, Number(s.duration) || dur));
