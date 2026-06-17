@@ -138,7 +138,8 @@ router.post('/analyze', async (req, res) => {
         const storyboardUser = [
             `统一风格锚定词：${styleAnchor}`,
             `画幅：${ratioDesc}`,
-            `单镜头基准时长：${dur} 秒（每个镜头 duration 默认就填 ${dur}，绝对不要用 1-2 秒的碎时长；仅当台词较长时才适当加长）`,
+            `单镜头基准时长：${dur} 秒（每个镜头 duration 默认填 ${dur}；绝对不要用 1-2 秒碎时长）`,
+            `内容密度：每个镜头要装下约 ${dur} 秒的内容——把同一场景连续发生的多个节拍/多句台词合并进同一镜头来填满时长，不要每句台词就切一个镜头${dur >= 8 ? `（${dur} 秒的镜头通常应包含连续 2-3 句对白或一段完整动作）` : ''}`,
             shotCountReq,
             `可用人物：${charNames.join('、') || '无'}`,
             `可用场景：${sceneNames.join('、') || '无'}`,
