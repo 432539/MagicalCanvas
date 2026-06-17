@@ -110,7 +110,8 @@ function buildStoryboardPrompt(styleName, styleAnchor) {
     "characters": ["出场角色名"],
     "scene": "所在场景名",
     "props": ["涉及道具名,无则空数组"],
-    "imagePrompt": "以风格锚定词开头的分镜生图提示词",
+    "imagePrompt": "以风格锚定词开头的分镜首帧(镜头开始瞬间)生图提示词",
+    "endImagePrompt": "以风格锚定词开头的分镜尾帧(镜头结束瞬间,动作完成后的画面,与首帧同场景同角色,仅姿态/表情/位置变化)生图提示词,用于首尾帧图生视频",
     "videoPrompt": "上述结构化七要素视频提示词",
     "duration": 4,
     "dialogue": "该镜头台词原文,无则空字符串"

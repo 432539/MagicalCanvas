@@ -612,7 +612,7 @@ export default function App() {
     setIsBatchGenOpen(false);
   }, [nodes, setNodes, refreshGenConcurrency]);
 
-  const handleCreateStoryWorkflow = React.useCallback((result: StoryWorkflowResult, opts: { autoGenerate: boolean; aspectRatio?: string }) => {
+  const handleCreateStoryWorkflow = React.useCallback((result: StoryWorkflowResult, opts: { autoGenerate: boolean; aspectRatio?: string; keyframeMode?: 'single' | 'startend' | 'grid9' }) => {
     const GAP_X = 160;
     const GAP_Y = 70;
     // 统一画幅：分镜图 / 视频 / 场景空镜都用用户选择的比例
@@ -673,37 +673,54 @@ export default function App() {
       ...(result.props || []).map(p => makeAsset(p, '道具', '1:1')),
     ];
 
-    // —— 第 2 列：分镜图片节点（连线引用对应资产）——
-    const shotNodes: NodeData[] = (result.shots || []).map((shot, i) => {
+    // 镜头引用的资产节点 id（人物/场景/道具，最多 6 个）
+    const refToParents = (shot: any): string[] => {
       const refNames = [...(shot.characters || []), shot.scene, ...(shot.props || [])].filter(Boolean) as string[];
-      const parentIds = refNames
-        .map(name => assetNameToId.get(name))
-        .filter((id): id is string => !!id)
-        .slice(0, 6);
-      return {
-        ...defaults,
-        id: crypto.randomUUID(),
-        type: NodeType.IMAGE,
-        title: `分镜 ${String(i + 1).padStart(2, '0')}`,
-        x: 0, y: 0,
-        prompt: shot.imagePrompt || shot.description || '',
-        aspectRatio: ratio,
-        parentIds,
-      };
+      return refNames.map(name => assetNameToId.get(name)).filter((id): id is string => !!id).slice(0, 6);
+    };
+    const mkImage = (title: string, prompt: string, parentIds: string[], ar: string): NodeData => ({
+      ...defaults, id: crypto.randomUUID(), type: NodeType.IMAGE, title, x: 0, y: 0, prompt, aspectRatio: ar, parentIds,
+    });
+    const mkVideo = (shot: any, i: number, parentIds: string[]): NodeData => ({
+      ...defaults, id: crypto.randomUUID(), type: NodeType.VIDEO,
+      title: `镜头 ${String(i + 1).padStart(2, '0')} 视频`, x: 0, y: 0,
+      prompt: [shot.videoPrompt || shot.description || '', shot.dialogue ? `台词：${shot.dialogue}` : ''].filter(Boolean).join('\n'),
+      aspectRatio: ratio, videoDuration: Math.max(2, Math.min(15, Number(shot.duration) || 6)), parentIds,
     });
 
-    // —— 第 3 列：视频节点（连线引用分镜图）——
-    const videoNodes: NodeData[] = (result.shots || []).map((shot, i) => ({
-      ...defaults,
-      id: crypto.randomUUID(),
-      type: NodeType.VIDEO,
-      title: `镜头 ${String(i + 1).padStart(2, '0')} 视频`,
-      x: 0, y: 0,
-      prompt: [shot.videoPrompt || shot.description || '', shot.dialogue ? `台词：${shot.dialogue}` : ''].filter(Boolean).join('\n'),
-      aspectRatio: ratio,
-      videoDuration: Math.max(2, Math.min(15, Number(shot.duration) || 6)),
-      parentIds: [shotNodes[i].id],
-    }));
+    // —— 分镜图片列 + 视频列（按关键帧模式构建）——
+    const mode = opts.keyframeMode || 'single';
+    const shots = result.shots || [];
+    const shotNodes: NodeData[] = [];   // 全部分镜图片节点（自动生图用）
+    const videoNodes: NodeData[] = [];
+
+    if (mode === 'grid9') {
+      // 九宫格预览：每 9 个镜头合成一张预览图，不出视频
+      for (let g = 0; g < shots.length; g += 9) {
+        const chunk = shots.slice(g, g + 9);
+        const parentIds = Array.from(new Set(chunk.flatMap(refToParents))).slice(0, 6);
+        const cells = chunk.map((s, idx) => `第${idx + 1}格：${(s.description || s.imagePrompt || '').slice(0, 40)}`).join('；');
+        const prompt = `${result.styleAnchor || ''}，九宫格分镜预览图，3行3列共9格，每格一个连续镜头按从左到右、从上到下顺序排列，格子之间用细线分隔，整体风格统一。各格画面：${cells}`;
+        shotNodes.push(mkImage(`分镜预览 ${g + 1}-${Math.min(g + 9, shots.length)}`, prompt, parentIds, '1:1'));
+      }
+    } else if (mode === 'startend') {
+      // 首尾帧：每镜出首帧+尾帧两张图，视频用两张图做图生视频（首=起始帧，尾=结束帧）
+      shots.forEach((shot, i) => {
+        const p = refToParents(shot);
+        const nn = String(i + 1).padStart(2, '0');
+        const startN = mkImage(`分镜 ${nn} · 首帧`, shot.imagePrompt || shot.description || '', p, ratio);
+        const endN = mkImage(`分镜 ${nn} · 尾帧`, shot.endImagePrompt || `${shot.imagePrompt || shot.description || ''}，镜头结束瞬间，动作完成后的画面`, p, ratio);
+        shotNodes.push(startN, endN);
+        videoNodes.push(mkVideo(shot, i, [startN.id, endN.id]));
+      });
+    } else {
+      // 单帧（默认）：每镜 1 张分镜图 → 1 条视频
+      shots.forEach((shot, i) => {
+        const node = mkImage(`分镜 ${String(i + 1).padStart(2, '0')}`, shot.imagePrompt || shot.description || '', refToParents(shot), ratio);
+        shotNodes.push(node);
+        videoNodes.push(mkVideo(shot, i, [node.id]));
+      });
+    }
 
     // —— 分列布局（与一键排版一致的间距规则）——
     const columns: NodeData[][] = [[textNode], assetNodes, shotNodes, videoNodes].filter(col => col.length > 0);

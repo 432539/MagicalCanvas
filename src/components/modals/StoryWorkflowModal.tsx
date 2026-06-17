@@ -22,11 +22,14 @@ export interface StoryShot {
     scene: string;
     props: string[];
     imagePrompt: string;
+    endImagePrompt?: string;
     videoPrompt: string;
     duration: number;
     dialogue: string;
     shotSize?: string;
 }
+
+export type KeyframeMode = 'single' | 'startend' | 'grid9';
 
 export interface StoryWorkflowResult {
     title: string;
@@ -53,8 +56,14 @@ interface PromptTemplate {
 interface StoryWorkflowModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onCreate: (result: StoryWorkflowResult, opts: { autoGenerate: boolean; aspectRatio: string }) => void;
+    onCreate: (result: StoryWorkflowResult, opts: { autoGenerate: boolean; aspectRatio: string; keyframeMode: KeyframeMode }) => void;
 }
+
+const KEYFRAME_MODES: { value: KeyframeMode; label: string; desc: string }[] = [
+    { value: 'single', label: '单帧', desc: '每镜 1 张分镜图 → 视频（默认）' },
+    { value: 'startend', label: '首尾帧', desc: '每镜出首帧+尾帧两张图，图生视频更可控' },
+    { value: 'grid9', label: '九宫格预览', desc: '每 9 镜合成一张分镜预览图（省额度，不出视频）' },
+];
 
 // ============================================================================
 // CONSTANTS
@@ -85,6 +94,7 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
     const [maxShots, setMaxShots] = useState(12);
     const [autoShots, setAutoShots] = useState(true); // 默认 AI 自动判定镜头数
     const [aspectRatio, setAspectRatio] = useState('16:9');
+    const [keyframeMode, setKeyframeMode] = useState<KeyframeMode>('single');
     const [autoGenerate, setAutoGenerate] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -246,7 +256,7 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
             }
             if (serverError) throw new Error(serverError);
             if (!result) throw new Error('连接中断，未收到分析结果，请重试');
-            onCreate(result, { autoGenerate, aspectRatio });
+            onCreate(result, { autoGenerate, aspectRatio, keyframeMode });
             onClose();
         } catch (err: any) {
             setError(err?.message || '剧本分析失败，请重试');
@@ -350,6 +360,20 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
                                 {autoShots ? 'AI 按节奏（快/中/慢）自动决定镜头数' : `约 ${Math.round(maxShots * shotDuration)} 秒成片`}
                             </div>
                         </div>
+                    </div>
+
+                    {/* 关键帧模式 */}
+                    <div>
+                        <label className={labelCls}><Clapperboard size={13} className="text-neutral-500" /> 关键帧模式</label>
+                        <div className="flex gap-1.5">
+                            {KEYFRAME_MODES.map(m => (
+                                <button key={m.value} onClick={() => setKeyframeMode(m.value)} disabled={loading}
+                                    className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors ${keyframeMode === m.value ? 'bg-cyan-500/15 border-cyan-500/50 text-cyan-300' : 'bg-white/[0.03] border-white/[0.07] text-neutral-400 hover:text-white hover:bg-white/[0.07]'}`}>
+                                    {m.label}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="text-[10px] text-neutral-600 px-1 mt-1">{KEYFRAME_MODES.find(m => m.value === keyframeMode)?.desc}</div>
                     </div>
 
                     {/* 提示词模板 */}
