@@ -10,7 +10,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, History, Paperclip, Send, Sparkles, Plus, Loader2, ChevronLeft, Trash2, MessageSquare } from 'lucide-react';
 import { ChatMessage } from './ChatMessage';
-import { useChatAgent, ChatMessage as ChatMessageType, ChatSession } from '../hooks/useChatAgent';
+import { useChatAgent, ChatMessage as ChatMessageType, ChatSession, CanvasAction } from '../hooks/useChatAgent';
 
 // ============================================================================
 // TYPES
@@ -30,6 +30,10 @@ interface ChatPanelProps {
     isDraggingNode?: boolean;
     onNodeDrop?: (nodeId: string, url: string, type: 'image' | 'video') => void;
     canvasTheme?: 'dark' | 'light';
+    /** 返回当前画布快照，作为画布 Agent 的上下文 */
+    getCanvasContext?: () => unknown | null;
+    /** 执行画布 Agent 返回的动作，返回中文总结 */
+    onCanvasActions?: (actions: CanvasAction[]) => Promise<string | void> | string | void;
 }
 
 // ============================================================================
@@ -42,6 +46,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     userName = '创作者',
     isDraggingNode = false,
     canvasTheme = 'dark',
+    getCanvasContext,
+    onCanvasActions,
 }) => {
     // --- State ---
     const [message, setMessage] = useState('');
@@ -66,7 +72,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         loadSession,
         deleteSession,
         hasMessages,
-    } = useChatAgent();
+    } = useChatAgent({ getCanvasContext, onCanvasActions });
 
     // Refs
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -342,7 +348,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 <div className="flex items-center gap-3">
                     {/* Topic or default title */}
                     <span className={`font-medium text-sm truncate max-w-[180px] ${isDark ? 'text-white' : 'text-neutral-900'}`}>
-                        {topic || (hasMessages ? '新建聊天' : 'ImageIdeas')}
+                        {topic || (hasMessages ? '新建聊天' : 'Magical Canvas')}
                     </span>
                 </div>
                 <div className="flex items-center gap-1">
@@ -388,13 +394,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         {/* Tip Card */}
                         {showTip && (
                             <div className={`rounded-2xl p-4 mb-4 ${isDark ? 'bg-neutral-800/50' : 'bg-neutral-100'}`}>
-                                <div className={`rounded-xl overflow-hidden mb-3 flex items-center justify-center ${isDark ? 'bg-neutral-700/50' : 'bg-neutral-200'}`}>
-                                    <img
-                                        src="/chat-preview.gif"
-                                        alt="拖放预览"
-                                        className="w-full h-auto object-cover rounded-xl"
-                                    />
-                                </div>
                                 <p className={`text-sm leading-relaxed mb-3 ${isDark ? 'text-neutral-400' : 'text-neutral-600'}`}>
                                     将图像/视频节点拖入聊天对话框，即可解锁更多高级功能，例如根据节点内容生成提示词，为你的创作带来更多灵感~
                                 </p>

@@ -16,7 +16,7 @@ import { fileURLToPath } from 'url';
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
 import { getKey } from "../config.js";
 import { gpt2apiChat } from "../services/gpt2api.js";
-import { CHAT_AGENT_SYSTEM_PROMPT, TOPIC_GENERATION_PROMPT } from "./prompts/system.js";
+import { CHAT_AGENT_SYSTEM_PROMPT, CANVAS_AGENT_SYSTEM_PROMPT, TOPIC_GENERATION_PROMPT } from "./prompts/system.js";
 
 // 读取 gpt2api 文本配置
 function getTextConfig() {
@@ -27,14 +27,32 @@ function getTextConfig() {
     };
 }
 
-/** 将会话内的 LangChain 消息转换为 OpenAI 兼容消息 */
-function toOpenAIMessages(messages) {
-    const out = [{ role: 'system', content: CHAT_AGENT_SYSTEM_PROMPT }];
+/** 将会话内的 LangChain 消息转换为 OpenAI 兼容消息
+ *  canvasContext 存在时使用「画布 Agent」系统提示词（具备操作画布的能力）。 */
+function toOpenAIMessages(messages, useCanvasAgent) {
+    const system = useCanvasAgent ? CANVAS_AGENT_SYSTEM_PROMPT : CHAT_AGENT_SYSTEM_PROMPT;
+    const out = [{ role: 'system', content: system }];
     for (const m of messages) {
         const role = m._getType?.() === 'human' ? 'user' : 'assistant';
         out.push({ role, content: m.content });
     }
     return out;
+}
+
+/** 从 AI 回复里提取画布动作 JSON（容忍 markdown 代码块、前后文字）。返回 { actions, cleanText } */
+function extractCanvasActions(text) {
+    const raw = String(text || '');
+    const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (!fence) return { actions: null, cleanText: raw };
+    let parsed = null;
+    try {
+        const obj = JSON.parse(fence[1].trim());
+        if (obj && Array.isArray(obj.actions)) parsed = obj.actions;
+    } catch { /* 非动作 JSON（如普通提示词块），原样保留 */ }
+    if (!parsed) return { actions: null, cleanText: raw };
+    // 把动作 JSON 块从展示文本里移除，只保留对话文字
+    const cleanText = raw.replace(fence[0], '').trim();
+    return { actions: parsed, cleanText };
 }
 
 /** 基于会话生成简短主题标题（使用 gpt2api 文本模型） */
@@ -379,18 +397,26 @@ export function getSessionData(sessionId) {
  * @param {string} apiKey - Google AI API key
  * @returns {Promise<object>} { response: string, topic?: string }
  */
-export async function sendMessage(sessionId, content, media, apiKey, onDelta) {
+export async function sendMessage(sessionId, content, media, apiKey, onDelta, canvasContext) {
     const session = getSession(sessionId);
     const { apiKey: gptKey, baseUrl, model } = getTextConfig();
+    const useCanvasAgent = !!canvasContext;
 
     // Debug: Log session state
     console.log(`[Chat] Session ${sessionId} has ${session.messages.length} existing messages`);
+
+    // 画布 Agent：把当前画布快照作为上下文前缀拼到用户消息里（仅本轮使用，不污染历史观感）
+    let effectiveContent = content;
+    if (useCanvasAgent) {
+        const ctxStr = typeof canvasContext === 'string' ? canvasContext : JSON.stringify(canvasContext);
+        effectiveContent = `【当前画布上下文】\n${ctxStr}\n\n【用户】\n${content || ''}`;
+    }
 
     // Build the user message content
     let messageContent;
     if (media && Array.isArray(media) && media.length > 0) {
         // Multimodal message with images/videos
-        const contentParts = [{ type: "text", text: content || "What do you see in these images?" }];
+        const contentParts = [{ type: "text", text: effectiveContent || "What do you see in these images?" }];
 
         for (const m of media) {
             // Resolve file URLs to base64 if needed
@@ -413,7 +439,7 @@ export async function sendMessage(sessionId, content, media, apiKey, onDelta) {
 
         messageContent = contentParts;
     } else {
-        messageContent = content;
+        messageContent = effectiveContent;
     }
 
     // Debug logging
@@ -439,16 +465,24 @@ export async function sendMessage(sessionId, content, media, apiKey, onDelta) {
     console.log(`[Chat] Sending ${session.messages.length} messages to gpt2api (${model})`);
 
     // Call gpt2api (OpenAI-compatible chat completions)
-    const oaMessages = toOpenAIMessages(session.messages);
+    const oaMessages = toOpenAIMessages(session.messages, useCanvasAgent);
     const responseText = await gpt2apiChat({ messages: oaMessages, model, baseUrl, apiKey: gptKey, onDelta });
-    const aiResponse = new AIMessage(responseText || '');
+
+    // 解析画布动作（仅画布 Agent 模式）；展示文本去掉 json 动作块
+    const { actions, cleanText } = useCanvasAgent
+        ? extractCanvasActions(responseText)
+        : { actions: null, cleanText: responseText };
+
+    const aiResponse = new AIMessage(cleanText || responseText || '');
     session.messages.push(aiResponse);
 
-    // Convert the multimodal user message to text for future context
-    // This ensures the AI remembers what images contained in subsequent turns
-    if (typeof messageContent !== 'string') {
-        const textVersion = contentToText(messageContent);
-        // Replace the last user message with text version but keep metadata
+    // 历史里把本轮用户消息存为「干净版」：原始文字 + 媒体标记，
+    // 不保留画布上下文/base64，避免历史膨胀与下一轮重复注入。
+    if (typeof messageContent !== 'string' || useCanvasAgent) {
+        const textVersion = typeof messageContent !== 'string'
+            ? contentToText([{ type: 'text', text: content || '' },
+                ...(Array.isArray(messageContent) ? messageContent.filter(p => p.type === 'image_url') : [])])
+            : (content || '');
         const userMsgIndex = session.messages.length - 2;
         const originalMsg = session.messages[userMsgIndex];
 
@@ -456,8 +490,6 @@ export async function sendMessage(sessionId, content, media, apiKey, onDelta) {
         if (originalMsg.additional_kwargs) {
             newMsg.additional_kwargs = originalMsg.additional_kwargs;
         }
-        session.messages[userMsgIndex] = newMsg;
-
         session.messages[userMsgIndex] = newMsg;
     }
 
@@ -483,6 +515,7 @@ export async function sendMessage(sessionId, content, media, apiKey, onDelta) {
 
     return {
         response: aiResponse.content.toString(),
+        actions: actions || undefined,
         topic: topic,
         topicPromise,
         messageCount: session.messages.length,

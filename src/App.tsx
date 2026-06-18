@@ -41,6 +41,7 @@ import { SelectionBoundingBox } from './components/canvas/SelectionBoundingBox';
 import { WorkflowPanel } from './components/WorkflowPanel';
 import { HistoryPanel } from './components/HistoryPanel';
 import { ChatPanel, ChatBubble } from './components/ChatPanel';
+import type { CanvasAction } from './hooks/useChatAgent';
 import { ImageEditorModal } from './components/modals/ImageEditorModal';
 import { VideoEditorModal } from './components/modals/VideoEditorModal';
 import { ExpandedMediaModal } from './components/modals/ExpandedMediaModal';
@@ -291,6 +292,175 @@ export default function App() {
   React.useEffect(() => {
     handleGenerateRef.current = handleGenerate;
   }, [handleGenerate]);
+
+  // ===== 画布 Agent：上下文快照 + 动作执行器 =====
+  // 给聊天 Agent 提供当前画布的精简快照，让它知道画布上有哪些节点
+  const buildCanvasContext = React.useCallback(() => {
+    return {
+      nodeCount: nodes.length,
+      selected: selectedNodeIds,
+      nodes: nodes.slice(0, 80).map(n => ({
+        id: n.id,
+        type: n.type,
+        title: n.title || n.type,
+        prompt: (n.prompt || '').slice(0, 140),
+        status: n.status,
+        parentIds: n.parentIds || [],
+      })),
+    };
+  }, [nodes, selectedNodeIds]);
+
+  // 执行 Agent 返回的画布动作（建点/连线/改/生成/删），返回一句中文总结
+  const executeCanvasActions = React.useCallback(async (actions: CanvasAction[]): Promise<string> => {
+    const NODE_W = 340, GAP_X = 120, GAP_Y = 90;
+    const typeMap: Record<string, NodeType> = {
+      text: NodeType.TEXT, image: NodeType.IMAGE, video: NodeType.VIDEO,
+    };
+    const refToId = new Map<string, string>();
+    const resolveId = (key?: string): string | undefined =>
+      key == null ? undefined : (refToId.get(key) || key);
+
+    const newNodes: NodeData[] = [];
+    const connectOps: { parent: string; child: string }[] = [];
+    const updateOps: { id: string; patch: Partial<NodeData> }[] = [];
+    const deleteIds: string[] = [];
+    const generateRefs: string[] = [];
+
+    // 新建节点的起始列：放在现有节点右侧，无节点则放视口中心
+    const baseX = nodes.length
+      ? Math.max(...nodes.map(n => n.x + getNodeWidth(n))) + 320
+      : (window.innerWidth / 2 - viewport.x) / viewport.zoom - 170;
+    const baseY = nodes.length
+      ? Math.min(...nodes.map(n => n.y))
+      : (window.innerHeight / 2 - viewport.y) / viewport.zoom - 150;
+
+    const posOf = (id?: string): { x: number; y: number } | null => {
+      if (!id) return null;
+      const nn = newNodes.find(n => n.id === id);
+      if (nn) return { x: nn.x, y: nn.y };
+      const en = nodes.find(n => n.id === id);
+      return en ? { x: en.x, y: en.y } : null;
+    };
+
+    let rootCount = 0;
+    const childCount = new Map<string, number>();
+    let created = 0, connected = 0, updated = 0, deleted = 0, generated = 0;
+
+    for (const a of actions) {
+      if (a.op === 'create_node') {
+        const nodeType = typeMap[String(a.nodeType || 'image').toLowerCase()] || NodeType.IMAGE;
+        const id = crypto.randomUUID();
+        if (a.ref) refToId.set(a.ref, id);
+
+        const parentIds = (a.parents || [])
+          .map(p => resolveId(p))
+          .filter((x): x is string => !!x);
+
+        let x: number, y: number;
+        const firstParentPos = parentIds.length ? posOf(parentIds[0]) : null;
+        if (firstParentPos) {
+          const pk = parentIds[0];
+          const k = childCount.get(pk) || 0;
+          childCount.set(pk, k + 1);
+          x = firstParentPos.x + NODE_W + GAP_X;
+          y = firstParentPos.y + k * GAP_Y;
+        } else {
+          x = baseX;
+          y = baseY + rootCount * GAP_Y;
+          rootCount++;
+        }
+
+        newNodes.push({
+          id,
+          type: nodeType,
+          title: a.title || undefined,
+          x, y,
+          prompt: a.prompt || '',
+          status: NodeStatus.IDLE,
+          model: 'Banana Pro',
+          aspectRatio: a.aspectRatio || 'Auto',
+          resolution: 'Auto',
+          parentIds,
+        });
+        created++;
+      } else if (a.op === 'connect') {
+        const parent = resolveId(a.from);
+        const child = resolveId(a.to);
+        if (parent && child) { connectOps.push({ parent, child }); connected++; }
+      } else if (a.op === 'update_node') {
+        const id = resolveId(a.id);
+        if (id) {
+          const patch: Partial<NodeData> = {};
+          if (a.prompt != null) patch.prompt = a.prompt;
+          if (a.title != null) patch.title = a.title;
+          if (a.aspectRatio != null) patch.aspectRatio = a.aspectRatio;
+          if (Object.keys(patch).length) { updateOps.push({ id, patch }); updated++; }
+        }
+      } else if (a.op === 'delete_node') {
+        const id = resolveId(a.id);
+        if (id) { deleteIds.push(id); deleted++; }
+      } else if (a.op === 'generate') {
+        if (a.target === 'all') generateRefs.push('all');
+        else { const id = resolveId(a.target); if (id) generateRefs.push(id); }
+      }
+    }
+
+    // 一次性提交画布变更：新增 → 连线 → 改 → 删
+    ignoreNextChange.current = false;
+    setNodes(prev => {
+      let next = [...prev, ...newNodes];
+      if (connectOps.length) {
+        next = next.map(n => {
+          const incoming = connectOps.filter(c => c.child === n.id).map(c => c.parent);
+          if (!incoming.length) return n;
+          const merged = Array.from(new Set([...(n.parentIds || []), ...incoming]));
+          return { ...n, parentIds: merged };
+        });
+      }
+      if (updateOps.length) {
+        next = next.map(n => {
+          const u = updateOps.find(o => o.id === n.id);
+          return u ? { ...n, ...u.patch } : n;
+        });
+      }
+      if (deleteIds.length) {
+        const del = new Set(deleteIds);
+        next = next
+          .filter(n => !del.has(n.id))
+          .map(n => n.parentIds?.some(p => del.has(p))
+            ? { ...n, parentIds: n.parentIds.filter(p => !del.has(p)) }
+            : n);
+      }
+      return next;
+    });
+
+    if (newNodes.length) setSelectedNodeIds(newNodes.map(n => n.id));
+
+    // 触发生成（错峰，等状态提交后用最新的 handleGenerate）
+    let genIds: string[] = [];
+    if (generateRefs.includes('all')) {
+      genIds = newNodes
+        .filter(n => n.type === NodeType.IMAGE || n.type === NodeType.VIDEO)
+        .map(n => n.id);
+    } else {
+      genIds = generateRefs.filter(id => id !== 'all');
+    }
+    genIds = Array.from(new Set(genIds));
+    if (genIds.length) {
+      generated = genIds.length;
+      genIds.forEach((id, i) => {
+        setTimeout(() => handleGenerateRef.current(id), 300 + i * 400);
+      });
+    }
+
+    const parts: string[] = [];
+    if (created) parts.push(`新建 ${created} 个节点`);
+    if (connected) parts.push(`连线 ${connected} 处`);
+    if (updated) parts.push(`修改 ${updated} 个`);
+    if (deleted) parts.push(`删除 ${deleted} 个`);
+    if (generated) parts.push(`开始生成 ${generated} 个`);
+    return parts.length ? `✅ 已在画布执行：${parts.join('、')}。` : '';
+  }, [nodes, viewport, setNodes, setSelectedNodeIds]);
 
   // Create new canvas
   const handleNewCanvas = () => {
@@ -644,6 +814,7 @@ export default function App() {
         result.summary || '',
         `【风格锚定】${result.styleAnchor || ''}`,
         result.screenplay ? `\n【节拍剧本】\n${result.screenplay}` : '',
+        result.quality ? `\n【对白检测】${result.quality.summary}${result.quality.warnings?.length ? '\n' + result.quality.warnings.map(w => `⚠ ${w}`).join('\n') : ''}` : '',
       ].filter(Boolean).join('\n\n'),
       textMode: 'editing' as const,
       aspectRatio: 'Auto',
@@ -1140,9 +1311,18 @@ export default function App() {
     };
     nodes.forEach(n => depthOf(n, new Set()));
 
-    // 按深度分列
+    // 剧本节点单独成最左列：优先识别标题以"剧本"开头的文本节点，
+    // 退回到所有无父的文本节点（一键创作工作流生成的剧本节点 title 形如「剧本 · xxx」）。
+    let scriptNodes = nodes.filter(n => n.type === NodeType.TEXT && (n.title || '').startsWith('剧本'));
+    if (scriptNodes.length === 0) {
+      scriptNodes = nodes.filter(n => n.type === NodeType.TEXT && (!n.parentIds || n.parentIds.length === 0));
+    }
+    const scriptSet = new Set(scriptNodes.map(n => n.id));
+
+    // 按深度分列（剧本节点不参与深度分列，单独排到最左）
     const cols = new Map<number, NodeData[]>();
     nodes.forEach(n => {
+      if (scriptSet.has(n.id)) return;
       const d = depthCache.get(n.id)!;
       if (!cols.has(d)) cols.set(d, []);
       cols.get(d)!.push(n);
@@ -1171,16 +1351,30 @@ export default function App() {
     const GAP_Y = 70;
     const pos = new Map<string, { x: number; y: number }>();
     let colX = 0;
-    sortedDepths.forEach(d => {
-      const arr = cols.get(d)!;
-      const colWidth = Math.max(...arr.map(n => sizes.get(n.id)!.w));
+
+    // 列内垂直居中堆叠的通用函数
+    const placeColumn = (arr: NodeData[], x: number) => {
       const heights = arr.map(n => sizes.get(n.id)!.h);
       const totalH = heights.reduce((s, h) => s + h, 0) + GAP_Y * (arr.length - 1);
       let y = -totalH / 2;
       arr.forEach((n, i) => {
-        pos.set(n.id, { x: colX, y });
+        pos.set(n.id, { x, y });
         y += heights[i] + GAP_Y;
       });
+      return Math.max(...arr.map(n => sizes.get(n.id)!.w));
+    };
+
+    // 第 0 列：剧本节点（单独最左列）
+    if (scriptNodes.length > 0) {
+      scriptNodes.sort((a, b) => a.y - b.y);
+      const scriptColWidth = placeColumn(scriptNodes, colX);
+      colX += scriptColWidth + GAP_X;
+    }
+
+    // 后续列：依赖深度分层
+    sortedDepths.forEach(d => {
+      const arr = cols.get(d)!;
+      const colWidth = placeColumn(arr, colX);
       colX += colWidth + GAP_X;
     });
 
@@ -1437,7 +1631,7 @@ export default function App() {
       {!storyboardGenerator.isModalOpen && (
         <>
           <ChatBubble onClick={toggleChat} isOpen={isChatOpen} />
-          <ChatPanel isOpen={isChatOpen} onClose={closeChat} isDraggingNode={isDraggingNodeToChat} canvasTheme={canvasTheme} />
+          <ChatPanel isOpen={isChatOpen} onClose={closeChat} isDraggingNode={isDraggingNodeToChat} canvasTheme={canvasTheme} getCanvasContext={buildCanvasContext} onCanvasActions={executeCanvasActions} />
         </>
       )}
 

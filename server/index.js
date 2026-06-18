@@ -1316,7 +1316,7 @@ app.post('/api/trim-video', async (req, res) => {
 // 聊天（SSE 流式）：模型生成的文字逐段推送，避免长回复时前端一直转圈。
 // 事件：{type:'delta', text} 增量 → {type:'done', response, topic, messageCount} → 可选 {type:'topic', topic}
 app.post('/api/chat', async (req, res) => {
-    const { sessionId, message, media } = req.body;
+    const { sessionId, message, media, canvasContext } = req.body;
 
     const API_KEY = getKey('TEXT_API_KEY');
     if (!API_KEY) {
@@ -1340,11 +1340,12 @@ app.post('/api/chat', async (req, res) => {
         const result = await chatAgent.sendMessage(sessionId, message, media, API_KEY, (delta, total) => {
             // gpt2apiChat 的 onDelta 给的是增量片段；直接推增量
             if (delta) { sentLen = total; send({ type: 'delta', text: delta }); }
-        });
+        }, canvasContext);
 
         send({
             type: 'done',
             response: result.response,
+            actions: result.actions,
             topic: result.topic,
             messageCount: result.messageCount,
         });

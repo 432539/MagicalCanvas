@@ -18,6 +18,7 @@
     "electron": "electron .",
     "electron:dev": "cross-env NODE_ENV=production electron .",
     "dist": "vite build && electron-builder --win portable",
+    "test:screenplay": "node scripts/test-screenplay-quality.mjs",
     "setup:local-models": "node -e \"require('child_process').execSync(process.platform === 'win32' ? 'setup-local-models.bat' : 'bash setup-local-models.sh', {stdio: 'inherit'})\""
   },
   "dependencies": {

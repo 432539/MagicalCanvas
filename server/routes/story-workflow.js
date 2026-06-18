@@ -13,6 +13,7 @@ import express from 'express';
 import { getKey } from '../config.js';
 import { gpt2apiChat } from '../services/gpt2api.js';
 import { BUILTIN_TEMPLATES, SCREENPLAY_PROMPT, buildAssetPrompt, buildStoryboardPrompt } from './prompt-templates.js';
+import { analyzeScreenplayQuality } from '../utils/screenplay-quality.js';
 
 const router = express.Router();
 
@@ -110,6 +111,7 @@ router.post('/analyze', async (req, res) => {
         const screenplayUser = [
             `【画幅】${ratioDesc}`,
             `【单镜头基准时长】${dur} 秒`,
+            `【对话要求】改编后至少 40% 节拍含角色对白；原文对话场景必须保留核心台词；同场 A→B→A 对话要在相邻节拍连续，禁止跳接`,
             truncated ? '【注意】以下文本过长已截断，请基于现有内容改编：' : '【小说/剧本原文】',
             text,
         ].join('\n\n');
@@ -176,6 +178,16 @@ router.post('/analyze', async (req, res) => {
             s.characters = Array.isArray(s.characters) ? s.characters : [];
             s.props = Array.isArray(s.props) ? s.props : [];
         });
+
+        const quality = analyzeScreenplayQuality({
+            screenplay,
+            shots: data.shots,
+            sourceScript: text,
+        });
+        if (quality.warnings.length) {
+            console.warn('[story-workflow] quality:', quality.summary, quality.warnings);
+        }
+        data.quality = quality;
 
         send({ type: 'done', data });
         res.end();

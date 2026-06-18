@@ -30,6 +30,28 @@ export interface ChatSession {
     messageCount: number;
 }
 
+/** 画布动作（由后端 AI 返回，前端执行） */
+export interface CanvasAction {
+    op: 'create_node' | 'connect' | 'update_node' | 'generate' | 'delete_node';
+    ref?: string;
+    nodeType?: 'text' | 'image' | 'video';
+    title?: string;
+    prompt?: string;
+    aspectRatio?: string;
+    parents?: string[];
+    from?: string;
+    to?: string;
+    id?: string;
+    target?: string;
+}
+
+interface UseChatAgentOptions {
+    /** 返回当前画布快照，作为 Agent 上下文；返回 null 则按普通聊天模式 */
+    getCanvasContext?: () => unknown | null;
+    /** 收到画布动作时回调，执行后可返回一句中文总结追加到消息末尾 */
+    onCanvasActions?: (actions: CanvasAction[]) => Promise<string | void> | string | void;
+}
+
 interface UseChatAgentReturn {
     messages: ChatMessage[];
     topic: string | null;
@@ -44,6 +66,14 @@ interface UseChatAgentReturn {
     deleteSession: (sessionId: string) => Promise<void>;
     refreshSessions: () => Promise<void>;
     hasMessages: boolean;
+}
+
+/** 流式展示时隐藏未闭合的 json 动作块（避免用户看到一大段 JSON 在打字） */
+function stripPartialActionBlock(text: string): string {
+    const idx = text.indexOf('```');
+    if (idx === -1) return text;
+    // 已闭合的代码块保留给 done 处理；流式期间直接截到第一个 ``` 之前
+    return text.slice(0, idx).trimEnd();
 }
 
 // ============================================================================
@@ -68,7 +98,9 @@ function generateMessageId(): string {
 // HOOK
 // ============================================================================
 
-export function useChatAgent(): UseChatAgentReturn {
+export function useChatAgent(options?: UseChatAgentOptions): UseChatAgentReturn {
+    const optionsRef = useRef(options);
+    optionsRef.current = options;
     // --- State ---
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [topic, setTopic] = useState<string | null>(null);
@@ -193,6 +225,10 @@ export function useChatAgent(): UseChatAgentReturn {
         };
         setMessages(prev => [...prev, userMessage]);
 
+        // 画布 Agent 上下文（存在则后端启用操作画布能力）
+        let canvasContext: unknown | null = null;
+        try { canvasContext = optionsRef.current?.getCanvasContext?.() ?? null; } catch { canvasContext = null; }
+
         try {
             const response = await fetch('/api/chat', {
                 method: 'POST',
@@ -200,6 +236,7 @@ export function useChatAgent(): UseChatAgentReturn {
                 body: JSON.stringify({
                     sessionId: currentSessionId,
                     message: content,
+                    canvasContext: canvasContext || undefined,
                     media: media ? media.map(m => ({
                         type: m.type,
                         // 库内路径直接传 url（后端历史记录直接引用，不重复存盘）；data URL 不传避免体积翻倍
@@ -244,12 +281,25 @@ export function useChatAgent(): UseChatAgentReturn {
                     try { evt = JSON.parse(line.slice(6)); } catch { continue; }
                     if (evt.type === 'delta' && evt.text) {
                         aiText += evt.text;
-                        upsertAiMessage(aiText);
+                        // 流式期间隐藏 json 动作块，避免用户看到一大段 JSON
+                        upsertAiMessage(stripPartialActionBlock(aiText));
                     } else if (evt.type === 'done') {
                         gotDone = true;
-                        upsertAiMessage(evt.response || aiText);
+                        upsertAiMessage(evt.response || stripPartialActionBlock(aiText));
                         if (evt.topic) setTopic(evt.topic);
                         setIsLoading(false); // 回复已完整，标题生成不再转圈
+                        // 执行画布动作并把总结追加到本条 AI 消息
+                        if (Array.isArray(evt.actions) && evt.actions.length && optionsRef.current?.onCanvasActions) {
+                            try {
+                                const summary = await optionsRef.current.onCanvasActions(evt.actions as CanvasAction[]);
+                                if (summary) {
+                                    const base = evt.response || stripPartialActionBlock(aiText);
+                                    upsertAiMessage(`${base}\n\n${summary}`);
+                                }
+                            } catch (e) {
+                                console.error('[CanvasAgent] execute actions failed:', e);
+                            }
+                        }
                     } else if (evt.type === 'topic') {
                         if (evt.topic) setTopic(evt.topic);
                     } else if (evt.type === 'error') {

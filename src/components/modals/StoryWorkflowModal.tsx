@@ -41,6 +41,13 @@ export interface StoryWorkflowResult {
     props: StoryAsset[];
     shots: StoryShot[];
     screenplay?: string;
+    quality?: {
+        grade: 'good' | 'fair' | 'poor';
+        summary: string;
+        warnings: string[];
+        dialogueBeatRatio: number;
+        dialogueCoverage: number;
+    };
 }
 
 interface PromptTemplate {
@@ -100,6 +107,7 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
     const [autoGenerate, setAutoGenerate] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [qualityWarning, setQualityWarning] = useState('');
 
     // 提示词模板
     const [templates, setTemplates] = useState<PromptTemplate[]>([]);
@@ -209,6 +217,7 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
         if (!script.trim()) { setError('请先输入或上传小说/剧本内容'); return; }
         setLoading(true);
         setError('');
+        setQualityWarning('');
         setStage('正在提交剧本…'); setChars(0); setStageNo(0); setElapsed(0);
         timerRef.current = setInterval(() => setElapsed(v => v + 1), 1000);
         try {
@@ -258,6 +267,14 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
             }
             if (serverError) throw new Error(serverError);
             if (!result) throw new Error('连接中断，未收到分析结果，请重试');
+
+            if (result.quality?.warnings?.length) {
+                setQualityWarning([
+                    result.quality.summary,
+                    ...result.quality.warnings.map(w => `· ${w}`),
+                ].join('\n'));
+            }
+
             onCreate(result, { autoGenerate, aspectRatio, keyframeMode });
             onClose();
         } catch (err: any) {
@@ -459,6 +476,7 @@ export const StoryWorkflowModal: React.FC<StoryWorkflowModalProps> = ({ isOpen, 
                         </div>
                     </button>
 
+                    {qualityWarning && <div className="px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-300 whitespace-pre-line">{qualityWarning}</div>}
                     {error && <div className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-xs text-red-400">{error}</div>}
                 </div>
 
