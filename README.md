@@ -67,7 +67,7 @@
 
 ### 直接使用（推荐）
 
-从 [Releases](https://github.com/28998306/MagicalCanvas/releases) 下载：
+从 [Releases](https://github.com/432539/MagicalCanvas/releases) 下载：
 
 | 文件 | 说明 |
 | --- | --- |
@@ -80,7 +80,7 @@
 
 ```bash
 # 环境要求：Node.js 18+
-git clone https://github.com/28998306/MagicalCanvas.git
+git clone https://github.com/432539/MagicalCanvas.git
 cd MagicalCanvas
 npm install
 
@@ -131,6 +131,11 @@ npx electron-builder --win
 - ✅ **统一模型配置**：以「文本 / 图片 / 视频 / 语音识别」四类通用 OpenAI 兼容配置取代原有的多家直连提供商设置
 - ✅ **素材库增强**：批量导入、拖放导入、多选删除、清空
 - ➖ **移除社交发布能力**：去除了发布到 X (Twitter)、TikTok 导入 / 发布等功能，专注本地创作
+
+## 💬 交流与反馈
+
+- **QQ 交流群：19302577**（使用问题、Bug 反馈、功能建议、创作交流都欢迎）
+- 也可在 [Issues](https://github.com/432539/MagicalCanvas/issues) 提交问题或建议
 
 ## 🤝 致谢
 
