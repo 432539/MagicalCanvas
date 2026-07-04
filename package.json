@@ -1,12 +1,12 @@
 {
-  "name": "twitcanva",
+  "name": "magical-canvas",
   "private": true,
   "version": "1.0.0",
-  "description": "Magical Canvas - AI 创作画布与视频剪辑工作室桌面应用（基于 TwitCanva-Video-Workflow 二次开发）",
+  "description": "Magical Canvas 魔法画布 - AI 创作画布与视频剪辑工作室桌面应用",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/28998306/MagicalCanvas.git"
+    "url": "https://github.com/432539/MagicalCanvas.git"
   },
   "type": "module",
   "main": "electron/main.cjs",

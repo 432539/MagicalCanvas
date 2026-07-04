@@ -193,18 +193,18 @@ Each scene must have:
 - "lighting": Description of lighting
 - "mood": Emotional tone
 
-IMPORTANT: When referring to the specific characters listed above, YOU MUST use the format @CharacterName (e.g., if the character is "Shawn", write "@Shawn"). This triggers the asset link in the UI.
+IMPORTANT: When referring to the specific characters listed above, YOU MUST use the format @CharacterName (e.g., if the character is "Alex", write "@Alex"). This triggers the asset link in the UI.
 
 Example format:
 {
   "styleAnchor": "photorealistic, cinematic, 35mm film, shallow depth of field",
   "characterDNA": {
-    "Shawn": "Asian male, mid-20s, pink dyed wavy hair, round wire-frame glasses, clean-shaven, wearing light blue denim jacket over white t-shirt, dark jeans"
+    "Alex": "Asian male, mid-20s, pink dyed wavy hair, round wire-frame glasses, clean-shaven, wearing light blue denim jacket over white t-shirt, dark jeans"
   },
   "scenes": [
     {
       "sceneNumber": 1,
-      "description": "@Shawn stands in the doorway of an abandoned warehouse...",
+      "description": "@Alex stands in the doorway of an abandoned warehouse...",
       "cameraAngle": "Wide shot",
       "cameraMovement": "Static",
       "lighting": "Dusty beams of afternoon sunlight streaming through broken windows",
@@ -377,7 +377,7 @@ The story should:
 - Be suitable for AI image generation
 - INCORPORATE VISUAL DETAILS from the provided reference images where applicable.
 
-IMPORTANT: When referring to the specific characters listed above, YOU MUST use the format @CharacterName (e.g., if the character is "Shawn", write "@Shawn"). This triggers the asset link in the UI.
+IMPORTANT: When referring to the specific characters listed above, YOU MUST use the format @CharacterName (e.g., if the character is "Alex", write "@Alex"). This triggers the asset link in the UI.
 
 Respond with ONLY the story synopsis, no additional text or formatting.`;
 
@@ -476,7 +476,7 @@ INSTRUCTIONS:
 3. Make the language concise, punchy, and cinematic.
 4. Ensure clarity of action for each potential scene.
 5. Do NOT make it too long (keep it under 150 words).
-6. IMPORTANT: Ensure that any mentions of the following characters use the @Name syntax: ${characterNames && characterNames.length > 0 ? characterNames.join(', ') : 'None'}. For example, use "@Shawn" instead of "Shawn". This is critical.
+6. IMPORTANT: Ensure that any mentions of the following characters use the @Name syntax: ${characterNames && characterNames.length > 0 ? characterNames.join(', ') : 'None'}. For example, use "@Alex" instead of "Alex". This is critical.
 
 Respond with ONLY the optimized story text.`;
 

@@ -34,8 +34,8 @@ modal deploy modal/camera_angle.py
 
 ### 3. Get Your Endpoint URLs
 After deployment, Modal provides URLs like:
-- `https://sankai-aicareer--camera-angle-control-cameraangle-generate.modal.run`
-- `https://sankai-aicareer--camera-angle-control-cameraangle-health.modal.run`
+- `https://your-username--camera-angle-control-cameraangle-generate.modal.run`
+- `https://your-username--camera-angle-control-cameraangle-health.modal.run`
 
 ### 4. Add to Environment
 ```env
