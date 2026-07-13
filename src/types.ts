@@ -109,7 +109,7 @@ export interface NodeData {
   // Product advertising workflow
   campaignId?: string; // Product campaign this node belongs to
   conceptId?: string; // Creative concept this node belongs to
-  adRole?: 'product-anchor' | 'product-brief' | 'concept-script' | 'visual-direction' | 'shot-image' | 'shot-video' | 'final-video' | 'concept-video';
+  adRole?: 'product-anchor' | 'product-brief' | 'concept-script' | 'visual-direction' | 'storyboard-board' | 'shot-image' | 'shot-video' | 'final-video' | 'concept-video';
   productReferenceUrls?: string[]; // Original product references used to preserve packaging/logo
   shotIndex?: number; // Order inside one advertising concept
   transition?: string; // Suggested transition into the next shot

@@ -254,8 +254,10 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
                 // Get non-TEXT parent nodes (image sources only)
                 const imageParents = (node.parentIds || [])
                     .map(pid => nodes.find(n => n.id === pid))
-                    .filter((parent): parent is NodeData => !!parent && parent.type === NodeType.IMAGE)
-                    .sort((a, b) => (a.shotIndex || 0) - (b.shotIndex || 0));
+                    .filter((parent): parent is NodeData => !!parent && parent.type === NodeType.IMAGE);
+                if (node.adRole !== 'concept-video') {
+                    imageParents.sort((a, b) => (a.shotIndex || 0) - (b.shotIndex || 0));
+                }
                 const imageParentIds = imageParents.map(parent => parent.id);
                 const orderedParentImages = Array.from(new Set(
                     imageParents.map(parent => parent.resultUrl).filter((url): url is string => !!url)

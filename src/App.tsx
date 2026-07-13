@@ -715,7 +715,7 @@ export default function App() {
     }
   }, [nodes]);
 
-  // 产品一键出片队列：关键帧图 → 每套创意一次多图直出成片。
+  // 产品一键出片队列：每套创意一张故事板母版 → 故事板 + 产品原图直出成片。
   useEffect(() => {
     const st = productAutoGenRef.current;
     if (!st || st.phase === 'done') return;
@@ -740,12 +740,12 @@ export default function App() {
     const slots = genConcurrencyRef.current - inFlight;
     if (slots > 0) {
       pending.slice(0, slots).forEach((n, index) => {
-        // 每条成片仅在该创意的全部关键帧成功后启动。
+        // 每条成片仅在故事板母版和产品参考图都成功后启动。
         if (st.phase === 'videos') {
           const parents = (n.parentIds || []).map(id => nodes.find(x => x.id === id));
           if (parents.some(p => !p || p.status !== NodeStatus.SUCCESS || !p.resultUrl)) {
             setNodes(prev => prev.map(x => x.id === n.id
-              ? { ...x, status: NodeStatus.ERROR, errorMessage: '部分关键帧未成功，已跳过多图视频生成' }
+              ? { ...x, status: NodeStatus.ERROR, errorMessage: '故事板母版或产品参考图不可用，已跳过视频生成' }
               : x));
             st.launched.add(n.id);
             return;
@@ -1178,37 +1178,35 @@ export default function App() {
       };
       directionNodes.push(directionNode);
 
-      const conceptImageNodes: NodeData[] = [];
-      (concept.shots || []).forEach((shot, shotIndex) => {
-        const shotNo = String(shotIndex + 1).padStart(2, '0');
-        const imageId = crypto.randomUUID();
-        const imageNode: NodeData = {
-          ...defaults,
-          id: imageId,
-          type: NodeType.IMAGE,
-          title: `创意 ${nn} · 关键帧 ${shotNo}`,
-          x: 0,
-          y: 0,
-          prompt: [
-            `${consistencyAnchor}。`,
-            concept.visualDirection ? `本创意视觉导演：${concept.visualDirection}。` : '',
-            shot.shotPurpose ? `关键帧职责：${shot.shotPurpose}。` : '',
-            shot.imagePrompt || '',
-            '必须与本创意其他关键帧形成明显的叙事推进，不得重复相同背景、产品摆位、景别和手势。',
-          ].filter(Boolean).join('\n'),
-          parentIds: [directionNode.id, ...productNodes.map(node => node.id)],
-          productReferenceUrls: productImages,
-          klingReferenceMode: 'subject',
-          klingSubjectIntensity: 85,
-          groupId,
-          campaignId,
-          conceptId,
-          shotIndex: shotIndex + 1,
-          adRole: 'shot-image',
-        };
-        imageNodes.push(imageNode);
-        conceptImageNodes.push(imageNode);
-      });
+      const storyboardResolution = opts.videoDuration >= 15 ? '4K' : '2K';
+      const storyboardNode: NodeData = {
+        ...defaults,
+        id: crypto.randomUUID(),
+        type: NodeType.IMAGE,
+        title: `故事板 ${nn} · ${concept.shots?.length || opts.shotsPerConcept} 格 / ${ratio} / ${storyboardResolution}`,
+        x: 0,
+        y: 0,
+        prompt: concept.storyboardPrompt || [
+          `生成一张 ${storyboardResolution}、${ratio} 画幅专业广告故事板大图，母版方向与最终视频完全一致，不是单帧海报。`,
+          `故事板包含 ${concept.shots?.length || opts.shotsPerConcept} 个按时间顺序排列的 ${ratio} 成片构图画格。`,
+          `${consistencyAnchor}。`,
+          ...(concept.shots || []).map((shot, index) =>
+            `镜头${String(index + 1).padStart(2, '0')} ${shot.startSec ?? index * 2}-${shot.endSec ?? Math.min(opts.videoDuration, index * 2 + 2)}秒：${shot.imagePrompt}`
+          ),
+        ].filter(Boolean).join('\n'),
+        aspectRatio: ratio,
+        resolution: storyboardResolution,
+        parentIds: [directionNode.id, ...productNodes.map(node => node.id)],
+        productReferenceUrls: productImages,
+        klingReferenceMode: 'subject',
+        klingSubjectIntensity: 90,
+        groupId,
+        campaignId,
+        conceptId,
+        shotIndex: 1,
+        adRole: 'storyboard-board',
+      };
+      imageNodes.push(storyboardNode);
 
       const combinedSubtitle = (concept.shots || []).map(shot => shot.subtitle).filter(Boolean).join(' / ');
       const combinedVoiceover = (concept.shots || []).map(shot => shot.voiceover || shot.narration).filter(Boolean).join(' ');
@@ -1223,15 +1221,16 @@ export default function App() {
           `${consistencyAnchor}。`,
           concept.visualDirection ? `【视觉导演】${concept.visualDirection}` : '',
           concept.rhythm ? `【整体节奏】${concept.rhythm}` : '',
-          `请把按顺序提供的 ${conceptImageNodes.length} 张关键帧作为同一条广告的连续视觉节点，平滑演绎完整叙事。`,
+          `第一张参考图是一张包含 ${concept.shots?.length || opts.shotsPerConcept} 格的完整故事板母版，请严格按画格编号和时间码演绎为一条 ${opts.videoDuration} 秒广告。后续参考图是产品原图，仅用于锁定产品外观。`,
           ...(concept.shots || []).map((shot, index) =>
-            `【关键帧 ${index + 1} → ${index + 2 <= conceptImageNodes.length ? `关键帧 ${index + 2}` : '结尾'}】${shot.videoPrompt || shot.action || shot.shotPurpose || '自然连续过渡'}`
+            `【${shot.startSec ?? index * 2}-${shot.endSec ?? Math.min(opts.videoDuration, index * 2 + 2)}秒｜镜头 ${index + 1}】${shot.videoPrompt || shot.action || shot.shotPurpose || '自然连续过渡'}`
           ),
           opts.generateVoiceover && combinedVoiceover ? `【完整中文口播】${combinedVoiceover}` : '',
           opts.generateSubtitles && combinedSubtitle ? `【字幕文案】${combinedSubtitle}` : '',
           '商品外观、包装结构、颜色、材质、比例、Logo 和可见文字全程不得漂移；禁止闪烁、跳切、产品变形和重复生成。',
         ].filter(Boolean).join('\n'),
-        parentIds: conceptImageNodes.map(node => node.id),
+        parentIds: [storyboardNode.id, ...productNodes.map(node => node.id)],
+        productReferenceUrls: productImages,
         videoDuration: Math.max(6, Math.min(15, Number(opts.videoDuration) || 6)),
         videoMode: 'multi-keyframe',
         videoModel: 'xai/grok-imagine-video',
@@ -1244,8 +1243,8 @@ export default function App() {
         adRole: 'concept-video',
       };
       videoNodes.push(conceptVideoNode);
-      conceptRows.push([scriptNode, directionNode, ...conceptImageNodes, conceptVideoNode]);
-      const nodeIds = [scriptNode.id, directionNode.id, ...conceptImageNodes.map(n => n.id), conceptVideoNode.id];
+      conceptRows.push([scriptNode, directionNode, storyboardNode, conceptVideoNode]);
+      const nodeIds = [scriptNode.id, directionNode.id, storyboardNode.id, conceptVideoNode.id];
       newGroups.push({
         id: groupId,
         nodeIds,

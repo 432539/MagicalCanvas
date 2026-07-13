@@ -25,6 +25,8 @@ export interface 产品DNA {
 
 export interface Shot {
     index: number;
+    startSec?: number;
+    endSec?: number;
     description?: string;
     imagePrompt: string;
     videoPrompt: string;
@@ -55,6 +57,7 @@ export interface Concept {
     propStrategy?: string;
     rhythm?: string;
     differentiation?: string;
+    storyboardPrompt?: string;
     shots: Shot[];
     [key: string]: unknown;
 }
@@ -132,9 +135,9 @@ const RATIOS = [
     { value: '4:3', label: '4:3' },
 ];
 const SCOPES: { value: ProductGenerationScope; label: string; desc: string }[] = [
-    { value: 'nodes', label: '仅策划节点', desc: '创建策略、视觉导演与关键帧节点' },
-    { value: 'images', label: '生成关键帧', desc: '为每套创意生成连续关键帧' },
-    { value: 'final', label: '多图直接出片', desc: '每套创意只调用一次 Grok 视频' },
+    { value: 'nodes', label: '仅策划节点', desc: '创建策略、视觉导演与故事板节点' },
+    { value: 'images', label: '生成故事板', desc: '每套创意生成一张高清分镜母版' },
+    { value: 'final', label: '故事板直接出片', desc: '故事板 + 产品原图生成一条 Grok 视频' },
 ];
 
 const emptyDraft = { dnaPrompt: '', conceptPrompt: '', shotPrompt: '' };
@@ -158,8 +161,7 @@ export const ProductWorkflowModal: React.FC<ProductWorkflowModalProps> = ({ isOp
     const [platform, setPlatform] = useState('抖音');
     const [aspectRatio, setAspectRatio] = useState('9:16');
     const [conceptCount, setConceptCount] = useState(3);
-    const [shotsPerConcept, setShotsPerConcept] = useState(3);
-    const [videoDuration, setVideoDuration] = useState(6);
+    const [videoDuration, setVideoDuration] = useState(15);
     const [generateSubtitles, setGenerateSubtitles] = useState(true);
     const [generateVoiceover, setGenerateVoiceover] = useState(true);
     const [generationScope, setGenerationScope] = useState<ProductGenerationScope>('final');
@@ -176,9 +178,9 @@ export const ProductWorkflowModal: React.FC<ProductWorkflowModalProps> = ({ isOp
 
     const currentTemplate = templates.find(template => template.id === templateId);
     const currentPrompt = PROMPT_TABS.find(tab => tab.id === promptTab)!;
-    const imageCount = conceptCount * shotsPerConcept;
+    const keyframeCount = Math.ceil(videoDuration / 2);
     const videoCount = conceptCount;
-    const estimatedImages = generationScope === 'nodes' ? 0 : imageCount;
+    const estimatedImages = generationScope === 'nodes' ? 0 : conceptCount;
     const estimatedVideos = generationScope === 'videos' || generationScope === 'final' ? videoCount : 0;
     const previewImage = productImages[0] || '';
 
@@ -200,9 +202,10 @@ export const ProductWorkflowModal: React.FC<ProductWorkflowModalProps> = ({ isOp
         });
         if (template.defaults) {
             if (template.defaults.conceptCount) setConceptCount(Math.max(1, Math.min(6, template.defaults.conceptCount)));
-            if (template.defaults.shotsPerConcept) setShotsPerConcept(Math.max(2, Math.min(4, template.defaults.shotsPerConcept)));
             if (template.defaults.aspectRatio) setAspectRatio(template.defaults.aspectRatio);
-            if (template.defaults.videoDuration) setVideoDuration(template.defaults.videoDuration);
+            if (template.defaults.videoDuration && [6, 10, 15].includes(template.defaults.videoDuration)) {
+                setVideoDuration(template.defaults.videoDuration);
+            }
             if (template.defaults.platform) setPlatform(template.defaults.platform);
         }
     };
@@ -354,7 +357,7 @@ export const ProductWorkflowModal: React.FC<ProductWorkflowModalProps> = ({ isOp
             templateId,
             aspectRatio,
             conceptCount,
-            shotsPerConcept,
+            shotsPerConcept: keyframeCount,
             videoDuration,
             generationScope,
             generateSubtitles,
@@ -628,8 +631,10 @@ export const ProductWorkflowModal: React.FC<ProductWorkflowModalProps> = ({ isOp
                                 className="w-full accent-amber-400" />
                         </div>
                         <div>
-                            <label className={labelCls}>每套关键帧 <span className="ml-auto text-amber-300">{shotsPerConcept} 张</span></label>
-                            <div className="flex gap-1.5">{[2, 3, 4].map(value => <button key={value} onClick={() => setShotsPerConcept(value)} className={`flex-1 ${choiceCls(shotsPerConcept === value)}`}>{value}</button>)}</div>
+                            <label className={labelCls}>时间轴关键帧 <span className="ml-auto text-amber-300">{keyframeCount} 张</span></label>
+                            <div className="flex h-8 items-center justify-center rounded-lg border border-cyan-500/20 bg-cyan-500/[0.06] text-[11px] text-cyan-200">
+                                每 2 秒自动规划 1 张
+                            </div>
                         </div>
                         <div>
                             <label className={labelCls}><Clock size={12} />每条成片时长</label>
@@ -675,7 +680,7 @@ export const ProductWorkflowModal: React.FC<ProductWorkflowModalProps> = ({ isOp
                         </div>
                         <div className="flex items-center gap-4 text-xs text-neutral-300">
                             <span>文本分析 <b className="text-white">3</b> 次</span>
-                            <span>关键帧 <b className="text-white">{estimatedImages}</b> 张</span>
+                            <span>故事板母版 <b className="text-white">{estimatedImages}</b> 张（每张 {keyframeCount} 格）</span>
                             <span>Grok 视频 <b className="text-white">{estimatedVideos}</b> 个 / 共 {estimatedVideos * videoDuration}s</span>
                             <span>FFmpeg 合成 <b className="text-emerald-300">0</b> 次</span>
                         </div>
@@ -702,7 +707,7 @@ export const ProductWorkflowModal: React.FC<ProductWorkflowModalProps> = ({ isOp
                             <div className="absolute inset-0 flex items-center justify-center"><Film size={21} className="text-amber-400" /></div>
                         </div>
                         <div className="flex items-center gap-2 mb-4">
-                            {['产品 DNA', '营销创意', '分镜脚本'].map((name, index, all) => (
+                            {['产品 DNA', '营销创意', '故事板规划'].map((name, index, all) => (
                                 <div key={name} className={`flex items-center gap-1 text-[11px] ${stageNo > index + 1 ? 'text-emerald-400' : stageNo === index + 1 ? 'text-amber-300' : 'text-neutral-600'}`}>
                                     <span className={`w-5 h-5 rounded-full flex items-center justify-center border ${stageNo >= index + 1 ? 'border-current' : 'border-neutral-700'}`}>{stageNo > index + 1 ? <Check size={11} /> : index + 1}</span>
                                     {name}{index < all.length - 1 && <span className="mx-1 text-neutral-700">→</span>}

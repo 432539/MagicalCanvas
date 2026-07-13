@@ -18,9 +18,9 @@ const COMMON_COMPLIANCE = [
 
 const COMMON_DEFAULTS = {
     conceptCount: 3,
-    shotsPerConcept: 3,
+    shotsPerConcept: 8,
     aspectRatio: '9:16',
-    videoDuration: 6,
+    videoDuration: 15,
     platform: '抖音',
 };
 
@@ -75,6 +75,7 @@ function makeTemplate(id, industry, focus, styleAnchor, extraRules = [], default
 6. 每条提示词末尾加入负面约束：禁止商品变形、包装漂移、颜色改变、文字乱码、Logo 重复、凭空增加配件、手指异常、主体融合、镜头抖动、闪烁跳变、过度锐化和廉价塑料感。
 7. 字幕只保留一个信息重点，旁白必须与当前画面证据同步；转场写清匹配依据，如动作匹配、构图匹配、遮挡转场或音效切点。
 8. 同一创意的关键帧要像一组完整广告分镜：场景和光线连续，但每帧必须有明显的景别、构图、动作与叙事推进；禁止只在相同背景中轻微旋转产品。
+9. 全部关键帧最终会被排入一张与成片比例完全一致的高分辨率故事板母版，因此每帧描述必须遵守成片安全区，在缩略画格中仍有清晰主体、单一视觉重点和可辨认的动作，不堆叠过多微小元素。
 
 全部使用专业、自然、具体的中文。不要堆砌互相矛盾的风格词，不要写无法被模型表现的抽象情绪，不得添加产品 DNA 未确认的功效、参数、认证、价格或优惠。`,
         styleAnchor,
@@ -96,7 +97,7 @@ const BUILTIN_PRODUCT_TEMPLATES = [
         '瓶器形态、膏体或质地、肤感联想、使用步骤和目标人群',
         '高端美妆品牌广告，柔和透亮的漫射主光、精致轮廓高光与干净渐变背景，85mm 人像及 100mm 微距焦段感，真实瓶器玻璃/金属/磨砂材质，膏体液体纹理细腻，肤色自然不过度磨皮，包装颜色、泵头结构、文字版式始终一致，整体洁净、克制、奢华',
         ['不得宣称治疗皮肤疾病、速效美白、祛斑或其他无法证实的医疗功效'],
-        { videoDuration: 6 },
+        { videoDuration: 15 },
     ),
     makeTemplate(
         'builtin-food-beverage',
@@ -111,7 +112,7 @@ const BUILTIN_PRODUCT_TEMPLATES = [
         '工业设计、接口与部件、可见功能、操作流程、空间尺度和科技体验',
         '国际科技品牌发布片质感，低调冷色环境与精确条形轮廓光，35mm～85mm 电影镜头焦段感，金属、玻璃、塑料和屏幕反射符合真实物理规律，工业结构锐利而不过度锐化，空间尺度可信，机身尺寸、按键、接口、开孔和标识位置始终一致，避免科幻粒子滥用',
         ['参数、续航、性能、能效与防护等级只能使用用户明确提供的数据'],
-        { aspectRatio: '16:9', videoDuration: 6 },
+        { aspectRatio: '16:9', videoDuration: 15 },
     ),
     makeTemplate(
         'builtin-fashion-bags',
@@ -126,7 +127,7 @@ const BUILTIN_PRODUCT_TEMPLATES = [
         '门店环境、服务过程、到店动线、招牌项目和真实可感知体验',
         '高品质本地生活纪实广告，真实门店环境与自然人物互动，24mm～35mm 环境建立镜头结合 50mm 服务细节，现场光与柔和补光平衡，肤色自然、空间通透、烟火气真实，动作不过度表演，招牌、菜单、陈设、工服和门店视觉识别保持一致',
         ['地址、营业时间、价格、优惠、服务范围和预约条件只能使用用户提供的信息'],
-        { conceptCount: 2, shotsPerConcept: 3, videoDuration: 6 },
+        { conceptCount: 2, shotsPerConcept: 8, videoDuration: 15 },
     ),
 ];
 

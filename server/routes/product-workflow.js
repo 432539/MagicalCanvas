@@ -135,8 +135,9 @@ function normalizeConcepts(raw, count, input) {
     return concepts;
 }
 
-function durationForShot(videoDuration) {
-    return videoDuration;
+function durationForShot(videoDuration, index) {
+    const startSec = index * 2;
+    return Math.max(1, Math.min(2, videoDuration - startSec));
 }
 
 function fallbackShot(concept, index, options) {
@@ -144,8 +145,17 @@ function fallbackShot(concept, index, options) {
     const phase = phases[Math.min(index, phases.length - 1)];
     const anchor = options.consistencyAnchor;
     const negative = '负面约束：禁止商品变形、包装漂移、颜色改变、文字乱码、Logo重复、凭空增加部件、手指异常、主体融合、闪烁跳变、镜头抖动、过度锐化和廉价塑料感';
+    const startSec = index * 2;
+    const endSec = Math.min(options.videoDuration, startSec + 2);
+    const beatDuration = Math.max(1, endSec - startSec);
+    const script = cleanString(concept.script, '', 2000).replace(/\s+/g, '');
+    const startChar = Math.floor(script.length * startSec / options.videoDuration);
+    const endChar = Math.max(startChar + 1, Math.floor(script.length * endSec / options.videoDuration));
+    const voiceover = script.slice(startChar, endChar).slice(0, Math.ceil(beatDuration * 4));
     return {
         index: index + 1,
+        startSec,
+        endSec,
         shotPurpose: phase,
         scene: options.sceneWorld || concept.sceneWorld || '与本创意视觉世界一致的商业场景',
         shotSize: index === 0 ? '环境中景建立' : (index === options.shotsPerConcept - 1 ? '产品英雄近景' : '产品细节特写'),
@@ -154,9 +164,9 @@ function fallbackShot(concept, index, options) {
         action: phase,
         imagePrompt: `${anchor}。镜头职责：${phase}。${options.styleAnchor}。${options.aspectRatio}画幅，专业商业广告构图，主体清晰完整，画面保留字幕安全区，真实光影与物理材质，细节锐利自然。${negative}`,
         videoPrompt: `${anchor}。以当前静帧为起始状态，围绕“${phase}”设计单一明确的主体动作和稳定电影感运镜，动作起止完整、节奏自然、物理运动可信，商品外观、包装、颜色、材质、尺寸比例、标签位置和可见标识全程不变，结尾构图为下一镜头保留连续性。${negative}`,
-        duration: durationForShot(options.videoDuration),
+        duration: beatDuration,
         subtitle: index === 0 ? concept.hook : (index === options.shotsPerConcept - 1 ? concept.cta : concept.angle),
-        voiceover: index === 0 ? concept.hook : concept.script,
+        voiceover,
         transition: index === options.shotsPerConcept - 1 ? '自然收束' : '动作匹配转场',
     };
 }
@@ -191,8 +201,14 @@ function normalizeShots(raw, concepts, options) {
             if (!videoPrompt.includes(options.consistencyAnchor)) {
                 videoPrompt = `${options.consistencyAnchor}。${videoPrompt}`;
             }
+            const startSec = shotIndex * 2;
+            const endSec = Math.min(options.videoDuration, startSec + 2);
+            const beatDuration = durationForShot(options.videoDuration, shotIndex);
+            const maxVoiceChars = Math.max(4, Math.ceil(beatDuration * 4));
             shots.push({
                 index: shotIndex + 1,
+                startSec,
+                endSec,
                 shotPurpose: cleanString(item.shotPurpose, fallback.shotPurpose, 300),
                 scene: cleanString(item.scene, fallback.scene, 500),
                 shotSize: cleanString(item.shotSize, fallback.shotSize, 200),
@@ -201,9 +217,9 @@ function normalizeShots(raw, concepts, options) {
                 action: cleanString(item.action, fallback.action, 500),
                 imagePrompt,
                 videoPrompt,
-                duration: durationForShot(options.videoDuration),
-                subtitle: cleanString(item.subtitle, fallback.subtitle, 300),
-                voiceover: cleanString(item.voiceover, fallback.voiceover, 800),
+                duration: beatDuration,
+                subtitle: cleanString(item.subtitle, fallback.subtitle, 12),
+                voiceover: cleanString(item.voiceover, fallback.voiceover, maxVoiceChars),
                 transition: cleanString(item.transition, fallback.transition, 100),
             });
         }
@@ -213,6 +229,45 @@ function normalizeShots(raw, concepts, options) {
 
 function promptValue(prompts, shortName, longName, fallback) {
     return cleanString(prompts?.[shortName] || prompts?.[longName], fallback, 20000);
+}
+
+function buildStoryboardBoardPrompt(concept, { videoDuration, aspectRatio, industry, productName, consistencyAnchor }) {
+    const shots = Array.isArray(concept.shots) ? concept.shots : [];
+    const count = shots.length;
+    const portrait = aspectRatio === '9:16' || aspectRatio === '3:4';
+    const square = aspectRatio === '1:1';
+    const grid = count <= 3
+        ? (portrait ? `纵向 ${count} 格` : `单排 ${count} 格`)
+        : count <= 5
+            ? (portrait ? '上排 2 格、中排 2 格、下排 1 格居中' : '上排 3 格、下排 2 格居中')
+            : portrait || square
+                ? '上排 3 格、中排 3 格、下排 2 格居中'
+                : '上排 4 格、下排 4 格';
+    const boardResolution = count >= 8 ? '4K 超高清' : '2K 高清';
+    const panelDetails = shots.map((shot, index) => [
+        `镜头${String(index + 1).padStart(2, '0')} ${shot.startSec}-${shot.endSec}秒`,
+        `景别与机位：${shot.shotSize || '专业广告景别'}，${shot.camera || '稳定电影机位'}`,
+        `场景：${shot.scene || concept.sceneWorld || '商业广告场景'}`,
+        `构图：${shot.composition || '产品为视觉焦点'}`,
+        `动作：${shot.action || shot.shotPurpose || '自然产品动作'}`,
+        `画面：${shot.imagePrompt || ''}`,
+        `下方短注：${shot.shotSize || '镜头'}｜${shot.shotPurpose || '产品展示'}｜${shot.subtitle || ''}`,
+    ].join('；')).join('\n');
+
+    return cleanString(`生成一张专业商业广告故事板母版大图。只生成一张 ${boardResolution}、${aspectRatio} 画幅故事板拼版，母版方向和最终成片完全一致，不是单帧海报，不要输出多张图片。
+
+顶部使用克制、清晰的信息栏，标注：标题《${concept.title || productName}》｜行业：${industry}｜时长：${videoDuration}秒｜分镜数：${count}｜成片比例：${aspectRatio}｜视觉方向：${concept.visualDirection || ''}。
+
+主体区域采用${grid}的严格网格，必须恰好包含 ${count} 个独立画格，不得为了填满网格增加空白镜头或第 ${count + 1} 格。每格都以 ${aspectRatio} 最终成片的安全区、主体大小和视觉重心进行构图，边框、间距、编号位置完全统一。镜号从镜头01连续到镜头${String(count).padStart(2, '0')}，不得重复、跳号或漏号；左上角只写镜号和数字时间码，画面下方只写一行极短简体中文注释。文字区域不得遮挡产品和人物。
+
+产品高保真锁定：${consistencyAnchor}。所有出现产品的画格必须是同一个真实产品，包装结构、颜色、材质、长宽比例、杯盖/接口/五金、Logo及可见文字位置完全一致；严禁变形、改色、复制出多个产品、增加不存在的部件或复杂图案。
+
+同一创意视觉统一：${concept.visualDirection || ''}。场景世界：${concept.sceneWorld || ''}。色彩与灯光：${concept.colorLighting || ''}。道具策略：${concept.propStrategy || ''}。关键帧之间必须有明显叙事推进，禁止只在同一背景轻微旋转产品。
+
+逐格内容：
+${panelDetails}
+
+整体质量：国际广告公司客户提案级 storyboard board，真实商业摄影，电影级自然光和产品布光，材质准确，人物统一，构图专业，画面丰富但克制。全部文字使用中国大陆规范简体中文，宁可少写也不要乱码、繁体字、错字或无意义字符。故事板之外不要添加说明、装饰边框、水印或额外画格。`, '', 24000);
 }
 
 router.post('/analyze', async (req, res) => {
@@ -231,8 +286,15 @@ router.post('/analyze', async (req, res) => {
     const template = findProductTemplate(req, body.templateId, body.industry) || DEFAULT_TEMPLATE;
     const templateDefaults = template.defaults || {};
     const conceptCount = clampInt(body.conceptCount, 1, 8, templateDefaults.conceptCount || 3);
-    const shotsPerConcept = clampInt(body.shotsPerConcept, 2, 4, templateDefaults.shotsPerConcept || 3);
-    const videoDuration = clampInt(body.videoDuration, 4, 15, templateDefaults.videoDuration || 6);
+    const videoDuration = [6, 10, 15].includes(Number(body.videoDuration))
+        ? Number(body.videoDuration)
+        : ([6, 10, 15].includes(Number(templateDefaults.videoDuration)) ? Number(templateDefaults.videoDuration) : 15);
+    const shotsPerConcept = Math.ceil(videoDuration / 2);
+    const timelineSpec = Array.from({ length: shotsPerConcept }, (_, index) => {
+        const start = index * 2;
+        const end = Math.min(videoDuration, start + 2);
+        return `关键帧${index + 1}=${start}-${end}秒`;
+    }).join('；');
     const aspectRatio = ['9:16', '16:9', '1:1', '4:3', '3:4'].includes(body.aspectRatio)
         ? body.aspectRatio
         : (templateDefaults.aspectRatio || '9:16');
@@ -318,6 +380,7 @@ router.post('/analyze', async (req, res) => {
 平台：${platform}
 画幅：${aspectRatio}
 每条多图直出成片时长：${videoDuration} 秒；每套创意使用 ${shotsPerConcept} 张连续关键帧
+时间轴：${timelineSpec}
 风格锚点：${styleAnchor}
 合规规则：${complianceRules.join('；')}
 产品 DNA：${JSON.stringify(productDNA)}
@@ -326,7 +389,7 @@ router.post('/analyze', async (req, res) => {
 - title：简洁的内部创意名称，不作为画面文案；
 - hook：前三秒可拍摄的画面钩子及对应口播；
 - angle：目标受众、核心痛点、唯一利益点和画面证明方式；
-- script：按“开场钩子→产品出场→卖点证据→使用情境→利益落点→CTA”写成完整连续中文口播；
+- script：按“开场钩子→产品出场→卖点证据→使用情境→利益落点→CTA”写成完整连续中文口播，总长度控制在 ${Math.floor(videoDuration * 3.5)}～${Math.ceil(videoDuration * 4)} 个汉字；
 - cta：自然、克制、符合平台语境的行动号召；
 - visualDirection / sceneWorld / colorLighting / propStrategy / rhythm：完整视觉导演矩阵；
 - differentiation：说明本创意与其他创意在布景、构图、光线和节奏上的明确差异。
@@ -359,6 +422,8 @@ JSON：
 
 输出前在内部逐镜检查：商品是否一致、提示词是否可执行、动作是否适配时长、旁白是否匹配画面、镜头是否重复、负面约束是否完整。只输出严格 JSON。`,
             prompt: `请为每套创意生成恰好 ${shotsPerConcept} 张连续关键帧，并以这些关键帧直接生成一条约 ${videoDuration} 秒的完整视频。
+固定时间轴：${timelineSpec}
+每张关键帧必须覆盖自己的 startSec 到 endSec，不得合并、遗漏或改变顺序。每段 voiceover 最多为该段秒数 × 4 个汉字，整条旁白总长度不得超过 ${Math.ceil(videoDuration * 4)} 个汉字。
 平台：${platform}
 画幅：${aspectRatio}
 风格锚点：${styleAnchor}
@@ -368,7 +433,7 @@ JSON：
 创意：${JSON.stringify(concepts)}
 
 输出：
-{"concepts":[{"id":"concept-1","shots":[{"index":1,"shotPurpose":"关键帧叙事职责","scene":"具体场景与空间层次","shotSize":"景别","camera":"机位、角度与焦段感","composition":"构图与主体位置","action":"主体动作与状态","imagePrompt":"完整专业中文生图提示词，含一致性锚点和负面约束","videoPrompt":"该帧到下一帧的动作与运镜提示词","duration":${videoDuration},"subtitle":"单一重点字幕","voiceover":"与画面同步的自然中文旁白","transition":"具体视觉衔接方式"}]}]}`,
+{"concepts":[{"id":"concept-1","shots":[{"index":1,"startSec":0,"endSec":2,"shotPurpose":"该时间段的叙事职责","scene":"具体场景与空间层次","shotSize":"景别","camera":"机位、角度与焦段感","composition":"构图与主体位置","action":"该时间段内完成的主体动作","imagePrompt":"完整专业中文生图提示词，含一致性锚点和负面约束","videoPrompt":"当前时间段及到下一关键帧的动作与运镜提示词","duration":2,"subtitle":"不超过12字的单一重点字幕","voiceover":"符合该段时长的自然中文旁白","transition":"具体视觉衔接方式"}]}]}`,
             maxTokens: Math.min(30000, 5000 + conceptCount * shotsPerConcept * 900),
             temperature: 0.45,
             onDelta: (_delta, total) => {
@@ -382,13 +447,22 @@ JSON：
             aspectRatio,
             styleAnchor,
             consistencyAnchor: productDNA.visualIdentity.consistencyAnchor,
-        });
+        }).map(concept => ({
+            ...concept,
+            storyboardPrompt: buildStoryboardBoardPrompt(concept, {
+                videoDuration,
+                aspectRatio,
+                industry: template.industry,
+                productName: productDNA.productName,
+                consistencyAnchor: productDNA.visualIdentity.consistencyAnchor,
+            }),
+        }));
 
         send({
             type: 'done',
             data: {
                 title: `${productDNA.productName || '产品'}广告创意`,
-                summary: `为${platform}生成 ${normalizedConcepts.length} 套独立广告创意，每套 ${shotsPerConcept} 张连续关键帧并多图直出一条成片`,
+                summary: `为${platform}生成 ${normalizedConcepts.length} 套独立广告创意，每套把 ${shotsPerConcept} 格时间轴分镜合成一张故事板母版并直出一条成片`,
                 styleAnchor,
                 templateId: template.id,
                 industry: template.industry,
