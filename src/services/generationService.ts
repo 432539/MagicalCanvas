@@ -26,6 +26,7 @@ export interface GenerateVideoParams {
   prompt: string;
   imageBase64?: string; // For Image-to-Video (start frame)
   lastFrameBase64?: string; // For frame-to-frame interpolation (end frame)
+  referenceImages?: string[]; // Ordered keyframes for multi-image video generation
   aspectRatio?: string;
   resolution?: string; // Add resolution to params
   duration?: number; // Video duration in seconds (e.g., 5, 6, 8, 10)

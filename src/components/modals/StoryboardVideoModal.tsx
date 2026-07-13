@@ -35,11 +35,11 @@ const VIDEO_RESOLUTIONS = ["Auto", "1080p", "768p", "720p", "512p"];
 
 const VIDEO_MODELS = [
     // gpt2api.com 视频模型
-    { id: 'veo3.1-lite', name: 'VEO 3.1 Lite', provider: 'gpt2api', recommended: true, durations: [4, 6, 8], resolutions: ['720p', '1080p'] },
+    { id: 'xai/grok-imagine-video', name: 'Grok Imagine Video', provider: 'gpt2api', recommended: true, durations: [6, 10, 15], resolutions: ['720p', '1080p'] },
+    { id: 'veo3.1-lite', name: 'VEO 3.1 Lite', provider: 'gpt2api', durations: [4, 6, 8], resolutions: ['720p', '1080p'] },
     { id: 'veo3.1', name: 'VEO 3.1', provider: 'gpt2api', durations: [4, 6, 8], resolutions: ['720p', '1080p'] },
     { id: 'veo3.1-flash', name: 'VEO 3.1 Flash', provider: 'gpt2api', durations: [4, 6, 8], resolutions: ['720p', '1080p'] },
     { id: 'sora', name: 'Sora 2', provider: 'gpt2api', durations: [4, 8, 12], resolutions: ['720p', '1080p'] },
-    { id: 'grok-imagine-video', name: 'Grok Imagine Video', provider: 'gpt2api', durations: [6, 10, 20, 30], resolutions: ['720p', '1080p'] },
     {
         id: 'veo-3.1',
         name: 'Veo 3.1',
@@ -85,7 +85,7 @@ export const StoryboardVideoModal: React.FC<StoryboardVideoModalProps> = ({
 
     const [prompts, setPrompts] = useState<Record<string, string>>({});
     const [settings, setSettings] = useState({
-        model: 'veo3.1-lite',
+        model: 'xai/grok-imagine-video',
         duration: 6,
         resolution: '720p' // Safe default
     });

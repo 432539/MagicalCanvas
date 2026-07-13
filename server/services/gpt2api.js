@@ -10,7 +10,7 @@
 
 // gpt2api 提供的模型 ID（用于在生成路由里判断走哪个提供商）
 export const GPT2API_IMAGE_MODELS = ['nano-banana-pro', 'nano-banana-v2', 'nano-banana', 'gpt-image-2'];
-export const GPT2API_VIDEO_MODELS = ['grok-imagine-video', 'sora', 'veo3.1', 'veo3.1-flash', 'veo3.1-lite'];
+export const GPT2API_VIDEO_MODELS = ['xai/grok-imagine-video', 'grok-imagine-video', 'sora', 'veo3.1', 'veo3.1-flash', 'veo3.1-lite'];
 
 export const isGpt2apiImageModel = (id) => GPT2API_IMAGE_MODELS.includes(id);
 export const isGpt2apiVideoModel = (id) => GPT2API_VIDEO_MODELS.includes(id);
@@ -186,11 +186,16 @@ export async function generateGpt2apiImage({ prompt, imageBase64Array, aspectRat
 /**
  * 视频生成（文生视频 / 图生视频）。返回 Buffer(mp4)。
  */
-export async function generateGpt2apiVideo({ prompt, imageBase64, lastFrameBase64, aspectRatio, resolution, duration, model, baseUrl, apiKey }) {
+export async function generateGpt2apiVideo({ prompt, imageBase64, lastFrameBase64, referenceImages, aspectRatio, resolution, duration, model, baseUrl, apiKey }) {
     if (!apiKey) throw new Error('未配置 gpt2api API Key（请在「设置」中填写）');
     const base = (baseUrl || 'https://www.gpt2api.com/v1').replace(/\/+$/, '');
 
-    const startImg = toImageInput(imageBase64);
+    const isGrokVideo = /(?:^|\/)grok-imagine-video$/i.test(String(model || ''));
+    const refs = Array.from(new Set([
+        ...(Array.isArray(referenceImages) ? referenceImages : []),
+        imageBase64,
+        lastFrameBase64,
+    ].map(toImageInput).filter(Boolean))).slice(0, 8);
     const body = {
         model,
         prompt: prompt || '',
@@ -199,10 +204,20 @@ export async function generateGpt2apiVideo({ prompt, imageBase64, lastFrameBase6
     };
     if (aspectRatio && aspectRatio !== 'Auto') body.ratio = aspectRatio;
     if (resolution && RES_TO_VIDEO_QUALITY[resolution]) body.quality = RES_TO_VIDEO_QUALITY[resolution];
-    if (startImg) body.image = startImg;
+    if (refs.length === 1) body.image = refs[0];
+    else if (refs.length > 1 && isGrokVideo) body.images = refs;
+    else if (refs.length > 1) body.image = refs[0];
 
-    const res = await fetch(`${base}/video/generations`, { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(body) });
-    const data = await res.json().catch(() => ({}));
+    let res = await fetch(`${base}/video/generations`, { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(body) });
+    let data = await res.json().catch(() => ({}));
+    const errorText = String(data?.error?.message || data?.error || '');
+    if (!res.ok && Array.isArray(body.images) && /images|unknown field|unsupported|invalid parameter|参数/i.test(errorText)) {
+        console.warn(`[gpt2api] 多图视频参数被上游拒绝，回退首张关键帧: ${errorText}`);
+        delete body.images;
+        body.image = refs[0];
+        res = await fetch(`${base}/video/generations`, { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(body) });
+        data = await res.json().catch(() => ({}));
+    }
     if (!res.ok) throw new Error(data?.error?.message || data?.error || `视频请求失败 (HTTP ${res.status})`);
 
     const taskId = data.task_id || data.id;

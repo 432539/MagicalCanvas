@@ -8,6 +8,7 @@
  */
 
 const { app, BrowserWindow, Menu, shell, ipcMain } = require('electron');
+const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const { fork } = require('child_process');
@@ -25,8 +26,37 @@ const appRoot = app.isPackaged
 
 const serverEntry = path.join(appRoot, 'server', 'index.js');
 
+function migrateLegacyUserData(userData) {
+    const legacyDir = path.join(app.getPath('appData'), 'twitcanva');
+    if (path.resolve(legacyDir) === path.resolve(userData) || !fs.existsSync(legacyDir)) return;
+
+    try {
+        fs.mkdirSync(userData, { recursive: true });
+
+        // 包名由 twitcanva 改为 magical-canvas 后，Electron 会切换 userData 目录。
+        // 仅补齐新目录中缺少的配置和素材，不覆盖用户在新版中已生成的内容。
+        const legacyConfig = path.join(legacyDir, 'twitcanva-config.json');
+        const currentConfig = path.join(userData, 'twitcanva-config.json');
+        if (fs.existsSync(legacyConfig) && !fs.existsSync(currentConfig)) {
+            fs.copyFileSync(legacyConfig, currentConfig, fs.constants.COPYFILE_EXCL);
+        }
+
+        const legacyLibrary = path.join(legacyDir, 'library');
+        if (fs.existsSync(legacyLibrary)) {
+            fs.cpSync(legacyLibrary, path.join(userData, 'library'), {
+                recursive: true,
+                force: false,
+                errorOnExist: false,
+            });
+        }
+    } catch (error) {
+        console.warn('[Migration] Could not migrate legacy user data:', error.message);
+    }
+}
+
 function startServer() {
     const userData = app.getPath('userData');
+    migrateLegacyUserData(userData);
 
     const env = {
         ...process.env,

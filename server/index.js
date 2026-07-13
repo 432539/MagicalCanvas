@@ -17,6 +17,8 @@ import storyboardRoutes from './routes/storyboard.js';
 import videoStudioRoutes from './routes/video-studio.js';
 import storyWorkflowRoutes from './routes/story-workflow.js';
 import promptTemplatesRoutes from './routes/prompt-templates.js';
+import productWorkflowRoutes from './routes/product-workflow.js';
+import productTemplatesRoutes from './routes/product-templates.js';
 import { getKey, getAllSettings, saveConfig, SETTINGS_KEYS } from './config.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -183,47 +185,48 @@ function saveBase64ToFile(dataUrl) {
  * @param {Array} nodes - Array of workflow nodes
  * @returns {Array} - Sanitized nodes with file URLs instead of base64
  */
-function sanitizeWorkflowNodes(nodes) {
+function sanitizeWorkflowNodes(nodes, mediaCache = new Map()) {
     if (!nodes || !Array.isArray(nodes)) return nodes;
 
     let sanitizedCount = 0;
+    const sanitizeMediaValue = value => {
+        if (typeof value !== 'string' || !value.startsWith('data:')) return value;
+        if (mediaCache.has(value)) return mediaCache.get(value);
+        const saved = saveBase64ToFile(value);
+        if (!saved) return value;
+        mediaCache.set(value, saved.url);
+        sanitizedCount++;
+        return saved.url;
+    };
 
     const sanitized = nodes.map(node => {
         const cleanNode = { ...node };
 
         // Check resultUrl for base64 data
         if (cleanNode.resultUrl && cleanNode.resultUrl.startsWith('data:')) {
-            const saved = saveBase64ToFile(cleanNode.resultUrl);
-            if (saved) {
-                cleanNode.resultUrl = saved.url;
-                sanitizedCount++;
-            }
+            cleanNode.resultUrl = sanitizeMediaValue(cleanNode.resultUrl);
         }
 
         // Check lastFrame for base64 data (video nodes)
         if (cleanNode.lastFrame && cleanNode.lastFrame.startsWith('data:')) {
-            const saved = saveBase64ToFile(cleanNode.lastFrame);
-            if (saved) {
-                cleanNode.lastFrame = saved.url;
-                sanitizedCount++;
-            }
+            cleanNode.lastFrame = sanitizeMediaValue(cleanNode.lastFrame);
         }
 
         // Check editorCanvasData for base64 data (Image Editor)
         if (cleanNode.editorCanvasData && cleanNode.editorCanvasData.startsWith('data:')) {
-            const saved = saveBase64ToFile(cleanNode.editorCanvasData);
-            if (saved) {
-                cleanNode.editorCanvasData = saved.url;
-                sanitizedCount++;
-            }
+            cleanNode.editorCanvasData = sanitizeMediaValue(cleanNode.editorCanvasData);
         }
 
         // Check editorBackgroundUrl for base64 data (Image Editor)
         if (cleanNode.editorBackgroundUrl && cleanNode.editorBackgroundUrl.startsWith('data:')) {
-            const saved = saveBase64ToFile(cleanNode.editorBackgroundUrl);
-            if (saved) {
-                cleanNode.editorBackgroundUrl = saved.url;
-                sanitizedCount++;
+            cleanNode.editorBackgroundUrl = sanitizeMediaValue(cleanNode.editorBackgroundUrl);
+        }
+
+        // Product/story reference arrays may contain the same uploaded base64 image.
+        // Reuse the cached file URL so a workflow stores only one copy.
+        for (const key of ['productReferenceUrls', 'characterReferenceUrls']) {
+            if (Array.isArray(cleanNode[key])) {
+                cleanNode[key] = cleanNode[key].map(sanitizeMediaValue);
             }
         }
 
@@ -252,6 +255,8 @@ app.use('/api/storyboard', storyboardRoutes);
 // Mount story workflow routes (一键创建工作流)
 app.use('/api/story-workflow', storyWorkflowRoutes);
 app.use('/api/prompt-templates', promptTemplatesRoutes);
+app.use('/api/product-workflow', productWorkflowRoutes);
+app.use('/api/product-templates', productTemplatesRoutes);
 
 // NOTE: Old Kling helpers removed - now in server/services/kling.js
 
@@ -533,8 +538,28 @@ app.post('/api/workflows', async (req, res) => {
         }
 
         // Sanitize nodes: convert any base64 data to file URLs before saving
+        const workflowMediaCache = new Map();
         if (workflow.nodes) {
-            workflow.nodes = sanitizeWorkflowNodes(workflow.nodes);
+            workflow.nodes = sanitizeWorkflowNodes(workflow.nodes, workflowMediaCache);
+        }
+        if (Array.isArray(workflow.groups)) {
+            workflow.groups = workflow.groups.map(group => {
+                if (!group?.productContext) return group;
+                const sanitizeGroupMedia = value => {
+                    if (typeof value !== 'string' || !value.startsWith('data:')) return value;
+                    const url = workflowMediaCache.get(value) || saveBase64ToFile(value)?.url || value;
+                    workflowMediaCache.set(value, url);
+                    return url;
+                };
+                const referenceImageUrls = Array.isArray(group.productContext.referenceImageUrls)
+                    ? group.productContext.referenceImageUrls.map(sanitizeGroupMedia)
+                    : group.productContext.referenceImageUrls;
+                const referenceImageUrl = sanitizeGroupMedia(group.productContext.referenceImageUrl);
+                return {
+                    ...group,
+                    productContext: { ...group.productContext, referenceImageUrl, referenceImageUrls },
+                };
+            });
         }
 
         fs.writeFileSync(filePath, JSON.stringify(workflow, null, 2));

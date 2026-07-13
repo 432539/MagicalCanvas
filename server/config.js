@@ -48,7 +48,7 @@ export const DEFAULTS = {
     IMAGE_API_URL: 'https://www.gpt2api.com/v1',
     IMAGE_MODEL: 'nano-banana-pro',
     VIDEO_API_URL: 'https://www.gpt2api.com/v1',
-    VIDEO_MODEL: 'veo3.1-lite',
+    VIDEO_MODEL: 'xai/grok-imagine-video',
     ASR_MODEL: 'whisper-1',
     GEN_CONCURRENCY: '3',
 };

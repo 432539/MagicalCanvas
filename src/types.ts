@@ -39,7 +39,7 @@ export interface NodeData {
   linkedVideoNodeId?: string; // For Text nodes: linked video node for prompt sync
 
   // Video node specific
-  videoMode?: 'standard' | 'frame-to-frame' | 'motion-control'; // Video generation mode
+  videoMode?: 'standard' | 'frame-to-frame' | 'motion-control' | 'multi-keyframe'; // Video generation mode
   frameInputs?: { nodeId: string; order: 'start' | 'end' }[]; // For frame-to-frame: connected image nodes
   videoModel?: string; // Video model version (e.g., 'veo-3.1', 'kling-v2-1')
   videoDuration?: number; // Video duration in seconds (e.g., 5, 6, 8, 10)
@@ -105,6 +105,16 @@ export interface NodeData {
 
   // Storyboard Generator specific
   characterReferenceUrls?: string[]; // URLs of character images for reference in generation
+
+  // Product advertising workflow
+  campaignId?: string; // Product campaign this node belongs to
+  conceptId?: string; // Creative concept this node belongs to
+  adRole?: 'product-anchor' | 'product-brief' | 'concept-script' | 'visual-direction' | 'shot-image' | 'shot-video' | 'final-video' | 'concept-video';
+  productReferenceUrls?: string[]; // Original product references used to preserve packaging/logo
+  shotIndex?: number; // Order inside one advertising concept
+  transition?: string; // Suggested transition into the next shot
+  adSubtitle?: string; // Subtitle burned into the final advertising video
+  adVoiceover?: string; // Optional voice-over copy retained for later TTS/editing
 }
 
 export interface ContextMenuState {
@@ -142,5 +152,21 @@ export interface NodeGroup {
     styleAnchor?: string;
     characterDNA?: Record<string, string>;
     compositeImageUrl?: string | null;
+  };
+  productContext?: {
+    campaignId: string;
+    templateId: string;
+    industry: string;
+    productName: string;
+    productDNA: Record<string, unknown>;
+    sellingPoints: string[];
+    styleAnchor: string;
+    referenceImageUrl: string;
+    referenceImageUrls?: string[];
+    platform: string;
+    aspectRatio: string;
+    conceptCount: number;
+    shotsPerConcept: number;
+    videoDuration: number;
   };
 }

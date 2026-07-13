@@ -51,6 +51,11 @@ import { useStoryboardGenerator } from './hooks/useStoryboardGenerator';
 import { StoryboardGeneratorModal } from './components/modals/StoryboardGeneratorModal';
 import { StoryboardVideoModal } from './components/modals/StoryboardVideoModal';
 import { StoryWorkflowModal, StoryWorkflowResult } from './components/modals/StoryWorkflowModal';
+import {
+  ProductWorkflowModal,
+  ProductWorkflowOptions,
+  ProductWorkflowResult,
+} from './components/modals/ProductWorkflowModal';
 import { VideoStudioPage } from './components/videoStudio/VideoStudioPage';
 import { AppDialogHost, showAppAlert } from './components/ui/AppDialog';
 import { DesktopTitleBar } from './components/ui/DesktopTitleBar';
@@ -281,6 +286,8 @@ export default function App() {
     // 切换/加载画布前，中止在途生成并清掉自动队列，避免上一画布的生成串到新画布
     cancelAllGenerations();
     storyAutoGenRef.current = null;
+    productAutoGenRef.current = null;
+    cancelAllGenerations();
     await handleLoadWorkflow(id);
     setIsDirty(false);
   };
@@ -468,6 +475,9 @@ export default function App() {
   // Create new canvas
   const handleNewCanvas = () => {
     ignoreNextChange.current = true;
+    cancelAllGenerations();
+    storyAutoGenRef.current = null;
+    productAutoGenRef.current = null;
     setNodes([]);
     setGroups([]); // Reset groups for new canvas
     setSelectedNodeIds([]);
@@ -641,11 +651,20 @@ export default function App() {
   // 一键创建工作流（小说/剧本 → 资产 + 分镜 + 视频节点）
   // ============================================================================
   const [isStoryWorkflowOpen, setIsStoryWorkflowOpen] = useState(false);
+  const [isProductWorkflowOpen, setIsProductWorkflowOpen] = useState(false);
 
   // 自动生图队列：先生成资产图，全部完成后再生成分镜图（分镜依赖资产图作图生图参考）。
   // 用并发上限的队列驱动（而非一次性全部触发）：浏览器对同一域名最多 6 个并发连接，
   // 十几个生图请求同时挂起会饿死图片预览请求，导致节点裂图。
   const storyAutoGenRef = useRef<{ assetIds: string[]; shotIds: string[]; phase: 'assets' | 'shots' | 'done'; launched: Set<string> } | null>(null);
+  const productAutoGenRef = useRef<{
+    campaignId: string;
+    imageIds: string[];
+    videoIds: string[];
+    phase: 'images' | 'videos' | 'done';
+    scope: 'images' | 'videos' | 'final';
+    launched: Set<string>;
+  } | null>(null);
 
   // 生成并发数：从「设置」读取（GEN_CONCURRENCY，1-20），默认 3
   const genConcurrencyRef = useRef(3);
@@ -692,6 +711,48 @@ export default function App() {
       pending.slice(0, slots).forEach((n, i) => {
         st.launched.add(n.id);
         setTimeout(() => handleGenerateRef.current(n.id), i * 400);
+      });
+    }
+  }, [nodes]);
+
+  // 产品一键出片队列：关键帧图 → 每套创意一次多图直出成片。
+  useEffect(() => {
+    const st = productAutoGenRef.current;
+    if (!st || st.phase === 'done') return;
+    const isDone = (n: NodeData) => n.status === NodeStatus.SUCCESS || n.status === NodeStatus.ERROR;
+
+    const ids = st.phase === 'images' ? st.imageIds : st.videoIds;
+    const tracked = nodes.filter(n => ids.includes(n.id));
+    if (ids.length > 0 && tracked.length === 0) return;
+    if (ids.length === 0 || tracked.every(isDone)) {
+      if (st.phase === 'images' && st.scope !== 'images') {
+        st.phase = 'videos';
+        st.launched.clear();
+      } else {
+        st.phase = 'done';
+      }
+      setNodes(prev => [...prev]);
+      return;
+    }
+
+    const inFlight = tracked.filter(n => st.launched.has(n.id) && !isDone(n)).length;
+    const pending = tracked.filter(n => !st.launched.has(n.id));
+    const slots = genConcurrencyRef.current - inFlight;
+    if (slots > 0) {
+      pending.slice(0, slots).forEach((n, index) => {
+        // 每条成片仅在该创意的全部关键帧成功后启动。
+        if (st.phase === 'videos') {
+          const parents = (n.parentIds || []).map(id => nodes.find(x => x.id === id));
+          if (parents.some(p => !p || p.status !== NodeStatus.SUCCESS || !p.resultUrl)) {
+            setNodes(prev => prev.map(x => x.id === n.id
+              ? { ...x, status: NodeStatus.ERROR, errorMessage: '部分关键帧未成功，已跳过多图视频生成' }
+              : x));
+            st.launched.add(n.id);
+            return;
+          }
+        }
+        st.launched.add(n.id);
+        setTimeout(() => handleGenerateRef.current(n.id), index * 400);
       });
     }
   }, [nodes]);
@@ -772,6 +833,8 @@ export default function App() {
   const handleBatchGenerate = React.useCallback(async (kind: 'image' | 'video', scope: 'idle' | 'failed' | 'all') => {
     const targets = nodes.filter(n => (kind === 'image' ? isImageGenNode(n) : isVideoGenNode(n)) && matchScope(n, scope));
     if (targets.length === 0) return;
+    productAutoGenRef.current = null;
+    cancelAllGenerations();
     await refreshGenConcurrency(); // 用「设置」里最新的并发数调度
     const ids = new Set(targets.map(n => n.id));
     // 重置为待生成（清掉失败信息），由并发队列调度
@@ -783,17 +846,40 @@ export default function App() {
       launched: new Set(),
     };
     setIsBatchGenOpen(false);
-  }, [nodes, setNodes, refreshGenConcurrency]);
+  }, [cancelAllGenerations, nodes, setNodes, refreshGenConcurrency]);
 
   // 正在生成（LOADING）的图片/视频节点数量，用于显示「停止生成」入口
   const generatingCount = React.useMemo(
     () => nodes.filter(n => (n.type === NodeType.IMAGE || n.type === NodeType.VIDEO) && n.status === NodeStatus.LOADING).length,
     [nodes]
   );
+  const failedProductFinalCount = React.useMemo(
+    () => nodes.filter(n => n.adRole === 'concept-video' && n.status === NodeStatus.ERROR).length,
+    [nodes]
+  );
+
+  const handleRetryProductFinals = React.useCallback(() => {
+    const finals = nodes.filter(n => n.adRole === 'concept-video' && n.status === NodeStatus.ERROR);
+    if (!finals.length) return;
+    productAutoGenRef.current = {
+      campaignId: finals[0].campaignId || crypto.randomUUID(),
+      imageIds: [],
+      videoIds: finals.map(n => n.id),
+      phase: 'videos',
+      scope: 'final',
+      launched: new Set(),
+    };
+    const ids = new Set(finals.map(n => n.id));
+    setNodes(prev => prev.map(n => ids.has(n.id)
+      ? { ...n, status: NodeStatus.IDLE, errorMessage: undefined, generationStartTime: undefined }
+      : n));
+    setIsBatchGenOpen(false);
+  }, [nodes, setNodes]);
 
   // 停止全部生成：①断开自动队列，阻止后续节点启动；②中止在途网络请求；③把还在 LOADING 的节点复位为待生成
   const handleStopAllGenerations = React.useCallback(() => {
     storyAutoGenRef.current = null; // 关键：清掉自动队列，避免继续调度下一批
+    productAutoGenRef.current = null;
     cancelAllGenerations();
     setNodes(prev => prev.map(n =>
       (n.type === NodeType.IMAGE || n.type === NodeType.VIDEO) && n.status === NodeStatus.LOADING
@@ -969,6 +1055,286 @@ export default function App() {
       storyAutoGenRef.current = null;
     }
   }, [nodes, setNodes, setSelectedNodeIds, setViewport, refreshGenConcurrency]);
+
+  const handleCreateProductWorkflow = React.useCallback((
+    result: ProductWorkflowResult,
+    opts: ProductWorkflowOptions
+  ) => {
+    const GAP_X = 160;
+    const ratio = opts.aspectRatio || '9:16';
+    const campaignId = crypto.randomUUID();
+    const productImages = Array.from(new Set((opts.productImages || []).filter(Boolean))).slice(0, 6);
+    const productImage = productImages[0];
+    if (!productImage) {
+      showAppAlert('未找到产品参考图，请重新打开产品一键出片并添加图片。', { title: '产品一键出片' });
+      return;
+    }
+    const productName = String(result.productDNA?.productName || opts.productName || '未命名产品');
+    if (opts.generationScope !== 'nodes') {
+      storyAutoGenRef.current = null;
+      productAutoGenRef.current = null;
+      cancelAllGenerations();
+    }
+    const consistencyAnchor = String(result.productDNA?.visualIdentity?.consistencyAnchor || '产品外观、包装、主色、材质、比例、Logo 与可见文字必须严格保持参考图一致');
+    let baseX = nodes.length
+      ? Math.max(...nodes.map(n => n.x + getNodeWidth(n))) + 320
+      : 0;
+    const defaults = {
+      status: NodeStatus.IDLE,
+      model: 'Banana Pro',
+      resolution: '1K',
+      aspectRatio: ratio,
+    };
+
+    const productNodes: NodeData[] = productImages.map((image, index) => ({
+      ...defaults,
+      id: crypto.randomUUID(),
+      type: NodeType.IMAGE,
+      title: index === 0 ? `产品主图 · ${productName}` : `产品参考 ${index + 1} · ${productName}`,
+      x: 0,
+      y: 0,
+      prompt: '',
+      status: NodeStatus.SUCCESS,
+      resultUrl: image,
+      parentIds: [],
+      campaignId,
+      adRole: 'product-anchor',
+    }));
+    const briefNode: NodeData = {
+      ...defaults,
+      id: crypto.randomUUID(),
+      type: NodeType.TEXT,
+      title: `产品分析 · ${productName}`,
+      x: 0,
+      y: 0,
+      prompt: [
+        `【产品】${productName}`,
+        `【行业】${opts.industry || result.productDNA?.category || '通用电商'}`,
+        `【平台】${opts.platform}`,
+        `【产品视觉锁定】${consistencyAnchor}`,
+        `【产品 DNA】\n${JSON.stringify(result.productDNA || {}, null, 2)}`,
+        opts.sellingPoints ? `【用户提供卖点】\n${opts.sellingPoints}` : '',
+      ].filter(Boolean).join('\n\n'),
+      textMode: 'editing',
+      parentIds: [],
+      campaignId,
+      adRole: 'product-brief',
+    };
+
+    const conceptNodes: NodeData[] = [];
+    const directionNodes: NodeData[] = [];
+    const imageNodes: NodeData[] = [];
+    const videoNodes: NodeData[] = [];
+    const conceptRows: NodeData[][] = [];
+    const newGroups: any[] = [];
+
+    (result.concepts || []).forEach((concept, conceptIndex) => {
+      const conceptId = String(concept.id || `concept-${conceptIndex + 1}`);
+      const groupId = crypto.randomUUID();
+      const nn = String(conceptIndex + 1).padStart(2, '0');
+      const scriptNode: NodeData = {
+        ...defaults,
+        id: crypto.randomUUID(),
+        type: NodeType.TEXT,
+        title: `创意 ${nn} · ${concept.title || concept.angle || '广告方案'}`,
+        x: 0,
+        y: 0,
+        prompt: [
+          concept.hook ? `【3秒钩子】${concept.hook}` : '',
+          concept.angle ? `【创意角度】${concept.angle}` : '',
+          concept.script ? `【广告脚本】\n${concept.script}` : '',
+          concept.cta ? `【行动号召】${concept.cta}` : '',
+        ].filter(Boolean).join('\n\n'),
+        textMode: 'editing',
+        parentIds: [briefNode.id],
+        groupId,
+        campaignId,
+        conceptId,
+        adRole: 'concept-script',
+      };
+      conceptNodes.push(scriptNode);
+
+      const directionNode: NodeData = {
+        ...defaults,
+        id: crypto.randomUUID(),
+        type: NodeType.TEXT,
+        title: `视觉导演 ${nn} · ${concept.sceneWorld || concept.title || '品牌场景'}`,
+        x: 0,
+        y: 0,
+        prompt: [
+          concept.visualDirection ? `【整体视觉】${concept.visualDirection}` : '',
+          concept.sceneWorld ? `【场景世界】${concept.sceneWorld}` : '',
+          concept.colorLighting ? `【色彩灯光】${concept.colorLighting}` : '',
+          concept.propStrategy ? `【道具策略】${concept.propStrategy}` : '',
+          concept.rhythm ? `【镜头节奏】${concept.rhythm}` : '',
+          concept.differentiation ? `【差异化】${concept.differentiation}` : '',
+        ].filter(Boolean).join('\n\n'),
+        textMode: 'editing',
+        parentIds: [scriptNode.id],
+        groupId,
+        campaignId,
+        conceptId,
+        adRole: 'visual-direction',
+      };
+      directionNodes.push(directionNode);
+
+      const conceptImageNodes: NodeData[] = [];
+      (concept.shots || []).forEach((shot, shotIndex) => {
+        const shotNo = String(shotIndex + 1).padStart(2, '0');
+        const imageId = crypto.randomUUID();
+        const imageNode: NodeData = {
+          ...defaults,
+          id: imageId,
+          type: NodeType.IMAGE,
+          title: `创意 ${nn} · 关键帧 ${shotNo}`,
+          x: 0,
+          y: 0,
+          prompt: [
+            `${consistencyAnchor}。`,
+            concept.visualDirection ? `本创意视觉导演：${concept.visualDirection}。` : '',
+            shot.shotPurpose ? `关键帧职责：${shot.shotPurpose}。` : '',
+            shot.imagePrompt || '',
+            '必须与本创意其他关键帧形成明显的叙事推进，不得重复相同背景、产品摆位、景别和手势。',
+          ].filter(Boolean).join('\n'),
+          parentIds: [directionNode.id, ...productNodes.map(node => node.id)],
+          productReferenceUrls: productImages,
+          klingReferenceMode: 'subject',
+          klingSubjectIntensity: 85,
+          groupId,
+          campaignId,
+          conceptId,
+          shotIndex: shotIndex + 1,
+          adRole: 'shot-image',
+        };
+        imageNodes.push(imageNode);
+        conceptImageNodes.push(imageNode);
+      });
+
+      const combinedSubtitle = (concept.shots || []).map(shot => shot.subtitle).filter(Boolean).join(' / ');
+      const combinedVoiceover = (concept.shots || []).map(shot => shot.voiceover || shot.narration).filter(Boolean).join(' ');
+      const conceptVideoNode: NodeData = {
+        ...defaults,
+        id: crypto.randomUUID(),
+        type: NodeType.VIDEO,
+        title: `成片 ${nn} · ${concept.title || '广告方案'}`,
+        x: 0,
+        y: 0,
+        prompt: [
+          `${consistencyAnchor}。`,
+          concept.visualDirection ? `【视觉导演】${concept.visualDirection}` : '',
+          concept.rhythm ? `【整体节奏】${concept.rhythm}` : '',
+          `请把按顺序提供的 ${conceptImageNodes.length} 张关键帧作为同一条广告的连续视觉节点，平滑演绎完整叙事。`,
+          ...(concept.shots || []).map((shot, index) =>
+            `【关键帧 ${index + 1} → ${index + 2 <= conceptImageNodes.length ? `关键帧 ${index + 2}` : '结尾'}】${shot.videoPrompt || shot.action || shot.shotPurpose || '自然连续过渡'}`
+          ),
+          opts.generateVoiceover && combinedVoiceover ? `【完整中文口播】${combinedVoiceover}` : '',
+          opts.generateSubtitles && combinedSubtitle ? `【字幕文案】${combinedSubtitle}` : '',
+          '商品外观、包装结构、颜色、材质、比例、Logo 和可见文字全程不得漂移；禁止闪烁、跳切、产品变形和重复生成。',
+        ].filter(Boolean).join('\n'),
+        parentIds: conceptImageNodes.map(node => node.id),
+        videoDuration: Math.max(6, Math.min(15, Number(opts.videoDuration) || 6)),
+        videoMode: 'multi-keyframe',
+        videoModel: 'xai/grok-imagine-video',
+        generateAudio: opts.generateVoiceover,
+        groupId,
+        campaignId,
+        conceptId,
+        adSubtitle: opts.generateSubtitles ? combinedSubtitle : '',
+        adVoiceover: opts.generateVoiceover ? combinedVoiceover : '',
+        adRole: 'concept-video',
+      };
+      videoNodes.push(conceptVideoNode);
+      conceptRows.push([scriptNode, directionNode, ...conceptImageNodes, conceptVideoNode]);
+      const nodeIds = [scriptNode.id, directionNode.id, ...conceptImageNodes.map(n => n.id), conceptVideoNode.id];
+      newGroups.push({
+        id: groupId,
+        nodeIds,
+        label: `广告创意 ${nn} · ${concept.title || concept.angle || productName}`,
+        productContext: {
+          campaignId,
+          templateId: opts.templateId,
+          industry: opts.industry || '通用电商',
+          productName,
+          productDNA: result.productDNA || {},
+          sellingPoints: String(opts.sellingPoints || '').split(/[\n,，;；]+/).map(v => v.trim()).filter(Boolean),
+          styleAnchor: opts.styleAnchor || '',
+          referenceImageUrl: productImage,
+          referenceImageUrls: productImages,
+          platform: opts.platform,
+          aspectRatio: ratio,
+          conceptCount: opts.conceptCount,
+          shotsPerConcept: opts.shotsPerConcept,
+          videoDuration: opts.videoDuration,
+        },
+      });
+    });
+
+    // 高端紧凑布局：共享产品区在左，每套创意是一条横向阶段泳道。
+    const laneGapY = 180;
+    const stageGapX = 70;
+    const rowHeights = conceptRows.map(row => Math.max(...row.map(getNodeHeight)));
+    const totalLaneHeight = rowHeights.reduce((sum, height) => sum + height, 0)
+      + laneGapY * Math.max(0, conceptRows.length - 1);
+    let laneY = -totalLaneHeight / 2;
+    const productCellW = productNodes.length ? Math.max(...productNodes.map(getNodeWidth)) : 320;
+    const productCellH = productNodes.length ? Math.max(...productNodes.map(getNodeHeight)) : 320;
+    productNodes.forEach((node, index) => {
+      node.x = baseX + (index % 2) * (productCellW + 32);
+      node.y = -((Math.ceil(productNodes.length / 2) * (productCellH + 32)) / 2) + Math.floor(index / 2) * (productCellH + 32);
+    });
+    const productGridWidth = Math.min(2, Math.max(1, productNodes.length)) * productCellW
+      + Math.max(0, Math.min(2, productNodes.length) - 1) * 32;
+    briefNode.x = baseX + productGridWidth + GAP_X;
+    briefNode.y = -getNodeHeight(briefNode) / 2;
+    const laneStartX = briefNode.x + getNodeWidth(briefNode) + GAP_X;
+    conceptRows.forEach((row, rowIndex) => {
+      let x = laneStartX;
+      const rowHeight = rowHeights[rowIndex];
+      row.forEach(node => {
+        node.x = x;
+        node.y = laneY + (rowHeight - getNodeHeight(node)) / 2;
+        x += getNodeWidth(node) + stageGapX;
+      });
+      laneY += rowHeight + laneGapY;
+    });
+
+    const allNew = [...productNodes, briefNode, ...conceptNodes, ...directionNodes, ...imageNodes, ...videoNodes];
+    setNodes(prev => [...prev, ...allNew]);
+    setGroups(prev => [...prev, ...newGroups]);
+    setSelectedNodeIds(allNew.map(n => n.id));
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    allNew.forEach(n => {
+      minX = Math.min(minX, n.x);
+      minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + getNodeWidth(n));
+      maxY = Math.max(maxY, n.y + getNodeHeight(n));
+    });
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const zoom = Math.min(1, Math.max(0.08, Math.min(
+      (window.innerWidth - 240) / Math.max(1, width),
+      (window.innerHeight - 240) / Math.max(1, height)
+    )));
+    setViewport({
+      x: (window.innerWidth - width * zoom) / 2 - minX * zoom,
+      y: (window.innerHeight - height * zoom) / 2 - minY * zoom,
+      zoom,
+    });
+
+    productAutoGenRef.current = null;
+    if (opts.generationScope !== 'nodes') {
+      void refreshGenConcurrency();
+      productAutoGenRef.current = {
+        campaignId,
+        imageIds: imageNodes.map(n => n.id),
+        videoIds: videoNodes.map(n => n.id),
+        phase: 'images',
+        scope: opts.generationScope,
+        launched: new Set(),
+      };
+    }
+  }, [cancelAllGenerations, nodes, refreshGenConcurrency, setGroups, setNodes, setSelectedNodeIds, setViewport]);
 
   const handleEditStoryboard = React.useCallback((groupId: string) => {
     const group = groups.find(g => g.id === groupId);
@@ -1579,6 +1945,7 @@ export default function App() {
           onAssetsClick={handleAssetsClick}
           onStoryboardClick={storyboardGenerator.openModal}
           onStoryWorkflowClick={() => setIsStoryWorkflowOpen(true)}
+          onProductWorkflowClick={() => setIsProductWorkflowOpen(true)}
           onVideoStudioClick={() => setIsVideoStudioOpen(true)}
           onToolsOpen={() => {
             closeWorkflowPanel();
@@ -1629,6 +1996,12 @@ export default function App() {
         isOpen={isStoryWorkflowOpen}
         onClose={() => setIsStoryWorkflowOpen(false)}
         onCreate={handleCreateStoryWorkflow}
+      />
+
+      <ProductWorkflowModal
+        isOpen={isProductWorkflowOpen}
+        onClose={() => setIsProductWorkflowOpen(false)}
+        onCreate={handleCreateProductWorkflow}
       />
 
       {/* Storyboard Generator Modal */}
@@ -2008,6 +2381,15 @@ export default function App() {
                       </button>
                     ))}
                   </div>
+                  {failedProductFinalCount > 0 && (
+                    <button
+                      onClick={handleRetryProductFinals}
+                      className="w-full mt-2 px-2 py-2 text-[11px] rounded-lg border transition-colors text-violet-400 border-violet-500/40 hover:bg-violet-500/10"
+                      title="只重新合成失败的产品广告成片，不重复生成已有镜头"
+                    >
+                      重试失败多图成片（{failedProductFinalCount}）
+                    </button>
+                  )}
                   {generatingCount > 0 && (
                     <button
                       onClick={handleStopAllGenerations}

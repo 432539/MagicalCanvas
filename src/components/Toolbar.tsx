@@ -23,6 +23,7 @@ interface ToolbarProps {
   onAssetsClick?: (e: React.MouseEvent) => void;
   onStoryboardClick?: (e: React.MouseEvent) => void;
   onStoryWorkflowClick?: (e: React.MouseEvent) => void;
+  onProductWorkflowClick?: (e: React.MouseEvent) => void;
   onVideoStudioClick?: (e: React.MouseEvent) => void;
   onToolsOpen?: () => void; // Called when tools dropdown opens to close other panels
   canvasTheme?: 'dark' | 'light';
@@ -39,6 +40,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onAssetsClick,
   onStoryboardClick,
   onStoryWorkflowClick,
+  onProductWorkflowClick,
   onVideoStudioClick,
   onToolsOpen,
   canvasTheme = 'dark'
@@ -145,6 +147,21 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                 </div>
               </button>
 
+              {/* Product Workflow (产品一键出片) */}
+              <button
+                onClick={handleToolClick(onProductWorkflowClick)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 transition-colors group ${isDark ? 'hover:bg-neutral-800' : 'hover:bg-neutral-100'
+                  }`}
+              >
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-gradient-to-br from-amber-500/25 to-rose-500/25">
+                  <Film size={16} className="text-amber-400" />
+                </div>
+                <div className="text-left">
+                  <p className={`text-sm ${isDark ? 'text-neutral-200 group-hover:text-white' : 'text-neutral-700 group-hover:text-neutral-900'}`}>产品一键出片</p>
+                  <p className={`text-xs ${isDark ? 'text-neutral-500' : 'text-neutral-400'}`}>产品图 → 多套营销成片</p>
+                </div>
+              </button>
+
               {/* Storyboard Generator */}
               <button
                 onClick={handleToolClick(onStoryboardClick)}
@@ -178,10 +195,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
       {/* 开源仓库链接（EXE 中经 setWindowOpenHandler 在系统浏览器打开） */}
       <a
-        href="https://github.com/28998306/MagicalCanvas"
+        href="https://github.com/432539/MagicalCanvas"
         target="_blank"
         rel="noopener noreferrer"
-        title="开源地址：github.com/28998306/MagicalCanvas"
+        title="开源地址：github.com/432539/MagicalCanvas"
         className={`w-8 h-8 rounded-full mb-2 flex items-center justify-center hover:scale-110 transition-all duration-200 ${isDark
           ? 'border border-neutral-700 text-neutral-400 hover:text-white hover:border-neutral-500'
           : 'border border-neutral-300 text-neutral-500 hover:text-neutral-900 hover:border-neutral-400'

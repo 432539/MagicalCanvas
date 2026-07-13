@@ -224,12 +224,25 @@ router.post('/generate-video', async (req, res) => {
     const reqNodeId = req.body?.nodeId;
     if (reqNodeId) activeGenerations.add(reqNodeId);
     try {
-        const { nodeId, prompt, title, imageBase64: rawImageBase64, lastFrameBase64: rawLastFrameBase64, motionReferenceUrl: rawMotionReferenceUrl, aspectRatio, resolution, duration, videoModel } = req.body;
+        const {
+            nodeId, prompt, title,
+            imageBase64: rawImageBase64,
+            lastFrameBase64: rawLastFrameBase64,
+            referenceImages: rawReferenceImages,
+            motionReferenceUrl: rawMotionReferenceUrl,
+            aspectRatio, resolution, duration, videoModel,
+        } = req.body;
         const { VIDEO_API_URL, VIDEO_API_KEY, VIDEO_MODEL, VIDEOS_DIR } = req.app.locals;
 
         // Resolve file URLs to base64
         const imageBase64 = resolveImageToBase64(rawImageBase64);
         const lastFrameBase64 = resolveImageToBase64(rawLastFrameBase64);
+        const referenceImages = Array.from(new Set(
+            (Array.isArray(rawReferenceImages) ? rawReferenceImages : [])
+                .slice(0, 8)
+                .map(resolveImageToBase64)
+                .filter(Boolean)
+        ));
         const motionReferenceUrl = resolveImageToBase64(rawMotionReferenceUrl);
 
         // 始终使用「设置」里的视频模型配置（OpenAI 兼容下游）
@@ -244,14 +257,15 @@ router.post('/generate-video', async (req, res) => {
             if (!VIDEO_API_KEY) {
                 return res.status(500).json({ error: "未配置视频模型 KEY，请在「设置」中填写" });
             }
-            // 节点上选择的模型优先；其次「设置」里的模型；都没有则用 veo3.1-lite
+            // 节点上选择的模型优先；其次「设置」里的模型；都没有则使用已验证可用的 Grok 别名。
             const requestedModel = videoModel && isGpt2apiVideoModel(videoModel) ? videoModel : null;
-            const resolvedVideoModel = requestedModel || VIDEO_MODEL || 'veo3.1-lite';
+            const resolvedVideoModel = requestedModel || VIDEO_MODEL || 'xai/grok-imagine-video';
             console.log(`Using video model: ${resolvedVideoModel} @ ${VIDEO_API_URL}, duration: ${duration || 6}s`);
             videoBuffer = await generateGpt2apiVideo({
                 prompt,
                 imageBase64,
                 lastFrameBase64,
+                referenceImages,
                 aspectRatio,
                 resolution,
                 duration: duration || 6,

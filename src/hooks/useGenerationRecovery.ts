@@ -85,7 +85,9 @@ export const useGenerationRecovery = ({
 
     // Track loading node IDs for stable dependency
     const loadingNodeIds = nodes
-        .filter(n => n.status === NodeStatus.LOADING)
+        // 产品最终成片由 /api/video-studio/export 负责，不属于 generation-status 管理的
+        // 图片/视频生成任务；若参与轮询，长导出会被误判为 stale 并标记失败。
+        .filter(n => n.status === NodeStatus.LOADING && n.adRole !== 'final-video')
         .map(n => n.id)
         .join(',');
 

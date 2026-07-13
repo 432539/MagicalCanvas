@@ -154,6 +154,16 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
                     }
                 }
 
+                // Product references are always included for advertising shots so the
+                // model preserves packaging, logo, shape and color across concepts.
+                if (node.productReferenceUrls && node.productReferenceUrls.length > 0) {
+                    for (const productUrl of node.productReferenceUrls) {
+                        if (imageBase64s.length < 14 && !imageBase64s.includes(productUrl)) {
+                            imageBase64s.push(productUrl);
+                        }
+                    }
+                }
+
                 // Generate image with all parent images and character references
                 const rawResultUrl = await generateImage({
                     prompt: combinedPrompt,
@@ -239,12 +249,17 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
                 // Get first parent image for video generation (start frame)
                 let imageBase64: string | undefined;
                 let lastFrameBase64: string | undefined;
+                let referenceImages: string[] | undefined;
 
                 // Get non-TEXT parent nodes (image sources only)
-                const imageParentIds = node.parentIds?.filter(pid => {
-                    const parent = nodes.find(n => n.id === pid);
-                    return parent?.type !== NodeType.TEXT;
-                }) || [];
+                const imageParents = (node.parentIds || [])
+                    .map(pid => nodes.find(n => n.id === pid))
+                    .filter((parent): parent is NodeData => !!parent && parent.type === NodeType.IMAGE)
+                    .sort((a, b) => (a.shotIndex || 0) - (b.shotIndex || 0));
+                const imageParentIds = imageParents.map(parent => parent.id);
+                const orderedParentImages = Array.from(new Set(
+                    imageParents.map(parent => parent.resultUrl).filter((url): url is string => !!url)
+                )).slice(0, 8);
 
                 // Check for frame-to-frame mode (explicit or auto-detected from 2+ image parents)
                 const hasMultipleInputs = imageParentIds.length >= 2;
@@ -322,11 +337,20 @@ export const useGeneration = ({ nodes, updateNode }: UseGenerationProps) => {
                     }
                 }
 
+                // Product concept videos use all generated keyframes in narrative order.
+                // Other video nodes remain backward compatible with the start/end fields.
+                if (orderedParentImages.length > 1) {
+                    referenceImages = orderedParentImages;
+                    imageBase64 = orderedParentImages[0];
+                    lastFrameBase64 = orderedParentImages[orderedParentImages.length - 1];
+                }
+
                 // Generate video
                 const rawResultUrl = await generateVideo({
                     prompt: combinedPrompt,
                     imageBase64,
                     lastFrameBase64,
+                    referenceImages,
                     aspectRatio: node.aspectRatio,
                     resolution: node.resolution,
                     duration: node.videoDuration,

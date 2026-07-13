@@ -50,11 +50,11 @@ const VIDEO_ASPECT_RATIOS = ["16:9", "9:16"];
 
 const VIDEO_MODELS = [
     // gpt2api.com 视频模型
-    { id: 'veo3.1-lite', name: 'VEO 3.1 Lite', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: false, recommended: true, durations: [4, 6, 8], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
+    { id: 'xai/grok-imagine-video', name: 'Grok Imagine Video', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, recommended: true, durations: [6, 10, 15], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16', '1:1'] },
+    { id: 'veo3.1-lite', name: 'VEO 3.1 Lite', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: false, durations: [4, 6, 8], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
     { id: 'veo3.1', name: 'VEO 3.1', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: false, durations: [4, 6, 8], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
     { id: 'veo3.1-flash', name: 'VEO 3.1 Flash', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: false, durations: [4, 6, 8], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
     { id: 'sora', name: 'Sora 2', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: false, durations: [4, 8, 12], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
-    { id: 'grok-imagine-video', name: 'Grok Imagine Video', provider: 'gpt2api', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, durations: [6, 10, 20, 30], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16', '1:1'] },
     { id: 'veo-3.1', name: 'Veo 3.1', provider: 'google', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, durations: [4, 6, 8], resolutions: ['Auto', '720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
     // Kling AI models - Consolidated: removed legacy v1, v1-5, v1-6, v2-master
     { id: 'kling-v2-1', name: 'Kling V2.1', provider: 'kling', supportsTextToVideo: true, supportsImageToVideo: true, supportsMultiImage: true, recommended: true, durations: [5, 10], resolutions: ['Auto', '720p', '1080p'], aspectRatios: ['16:9', '9:16'] },
@@ -786,7 +786,7 @@ const NodeControlsComponent: React.FC<NodeControlsProps> = ({
                                             {videoGenerationMode === 'text-to-video' ? '文本 → 视频' :
                                                 videoGenerationMode === 'image-to-video' ? '图像 → 视频' :
                                                     videoGenerationMode === 'motion-control' ? '动作控制' :
-                                                        '帧到帧'}
+                                                        data.videoMode === 'multi-keyframe' ? '多图关键帧 → 成片' : '帧到帧'}
                                         </div>
                                         {/* gpt2api Models */}
                                         {availableVideoModels.filter(m => m.provider === 'gpt2api').length > 0 && (
